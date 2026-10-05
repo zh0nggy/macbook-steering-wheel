@@ -1,0 +1,14 @@
+{
+  "deadzone": 0.05,
+  "gamma": 1.5,
+  "smooth": 0.0,
+  "invert": false,
+  "port": 5005,
+  "mapping": {
+    "steer": "Left stick X",
+    "throttle": "Right trigger",
+    "brake": "Left trigger",
+    "button_1": "B",
+    "button_2": "X"
+  }
+}
