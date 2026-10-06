@@ -5,8 +5,19 @@ once, because macimu needs root). Or from a terminal:
 
     sudo python3 sender_app.py
 
+To try it without a MacBook (on Windows too), use a slider instead of the
+motion sensor:
+
+    python sender_app.py --demo
+
 The Windows receiver app broadcasts a beacon, so its address shows up in the
 list here automatically -- no ipconfig needed.
+
+LATENCY: the sensor is polled every millisecond and a packet goes out as soon
+as a new sample arrives (up to MAX_RATE per second), instead of on a fixed
+100 Hz timer. Steering runs through a One Euro filter, which smooths jitter
+when you hold still without adding lag when you turn. The receiver echoes
+packets back, so the window shows the measured round-trip time.
 
 KEYS ARE READ FROM THIS WINDOW, not globally like mac_sender.py. Keep it in
 front while you drive. That avoids the Input Monitoring permission and stops
@@ -15,6 +26,7 @@ your pedal presses typing into some other app.
 
 import math
 import socket
+import sys
 import threading
 import time
 import tkinter as tk
@@ -23,6 +35,13 @@ from tkinter import messagebox
 import app_common
 import protocol
 from key_input import Ramp
+
+# --demo: run without a MacBook (e.g. on Windows) using a slider as the sensor.
+# Must happen before imu_reader is imported, because that imports macimu.
+DEMO = "--demo" in sys.argv
+if DEMO:
+    import demo_imu
+    demo_imu.install()
 
 try:
     # mac_sender imports imu_reader -> macimu, so it lives inside the guard too.
@@ -36,6 +55,17 @@ except Exception as exc:  # macimu missing, or not a Mac
 
 def wrap(deg):
     return (deg + 180.0) % 360.0 - 180.0
+
+
+MAX_RATE = 250.0      # packets/sec ceiling when the sensor delivers fast
+KEEPALIVE = 0.01      # always send at least every 10 ms (keys, failsafe)
+POLL = 0.001          # how often to check the sensor for a new sample
+
+# Accelerometer axes used only when the Mac has no fused orientation. If
+# steering is wrong in that mode, `sudo python3 imu_probe.py` prints the right
+# numbers for your laptop -- change them here.
+FALLBACK_LATERAL = 0
+FALLBACK_VERTICAL = 2
 
 
 # Key choices offered in the window -> Tk keysym. Tk names keys differently
@@ -125,9 +155,13 @@ class SenderEngine:
                        "sent": 0, "rejected": 0, "nodata": 0, "mode": "starting"}
         self.error = None
         self._smoothed = None
+        self._filter = app_common.OneEuroFilter()
+        self.rtt = app_common.RollingStats(1.0)
+        self.send_rate = app_common.RollingStats(1.0)
         self._stop = threading.Event()
         self._thread = None
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock = app_common.low_latency_socket()
+        self._sock.setblocking(False)
 
     def start(self):
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -158,17 +192,19 @@ class SenderEngine:
                 imu.stop()
             self._sock.close()
 
-    def _raw_roll(self, imu, use_fused, lateral, vertical):
+    def _raw_roll(self, imu, use_fused):
         if use_fused:
             orient = imu.orientation()
             return (None, "nodata") if orient is None else (orient[0], "ok")
+        # Fallback for Macs without fused orientation: tilt from gravity alone.
         accel = imu.accel()
         if accel is None:
             return (None, "nodata")
         magnitude = math.sqrt(sum(v * v for v in accel))
         if abs(magnitude - 1.0) > GRAVITY_TOLERANCE:
             return (None, "rejected")
-        return (math.degrees(math.atan2(accel[lateral], accel[vertical])), "ok")
+        return (math.degrees(math.atan2(accel[FALLBACK_LATERAL],
+                                        accel[FALLBACK_VERTICAL])), "ok")
 
     def _loop(self, imu):
         fused_available = imu.orientation() is not None
@@ -176,37 +212,45 @@ class SenderEngine:
         brake_ramp = Ramp(0.35, 0.18)
         seq = rejected = nodata = 0
         gear_up = gear_down = 0
-        prev_loop = time.monotonic()
+        steer = offset = 0.0
+        last_raw = None        # newest raw sample, to spot when a new one arrives
+        unwrapped = None       # raw roll made continuous, so the filter never sees a jump
+        last_sample_at = None
+        prev_loop = last_send = time.monotonic()
+        last_frame = None
         last_target = None
         st = self.status
 
         while not self._stop.is_set():
             loop_start = time.monotonic()
             cfg = self.settings
-            use_fused = fused_available and not cfg["accel_only"]
-            st["mode"] = ("fused (gyro + accel)" if use_fused else
-                          "accel-only" if cfg["accel_only"] else
-                          "accel-only (fused unavailable)")
+            st["mode"] = ("fused (gyro + accel)" if fused_available else
+                          "gravity only (fused unavailable)")
+            self._filter.min_cutoff = cfg["min_cutoff"]
+            self._filter.beta = cfg["beta"]
 
-            value, status = self._raw_roll(imu, use_fused, cfg["lateral"], cfg["vertical"])
+            value, status = self._raw_roll(imu, fused_available)
             if value is None:
                 if status == "rejected":
                     rejected += 1
                 else:
                     nodata += 1
-            elif self._smoothed is None:
-                self._smoothed = value
             else:
-                # wrap the DELTA before smoothing so a wrap-around never spikes
-                self._smoothed += wrap(value - self._smoothed) * cfg["lowpass"]
+                # Run the filter on EVERY reading, repeats included. Updating only
+                # on a changed value would freeze it mid-settle when the laptop
+                # is held still and the sensor repeats itself.
+                unwrapped = value if unwrapped is None else unwrapped + wrap(value - last_raw)
+                last_raw = value
+                dt = 0.0 if last_sample_at is None else loop_start - last_sample_at
+                last_sample_at = loop_start
+                self._smoothed = wrap(self._filter.update(unwrapped, dt))
 
-            if self._smoothed is not None and self.centre is None:
-                self.centre = self._smoothed  # until the user calibrates properly
-
-            offset = 0.0 if self.centre is None else wrap(self._smoothed - self.centre)
-            steer = protocol.clamp(offset / cfg["range"], -1.0, 1.0)
-            if cfg["invert"]:
-                steer = -steer
+                if self.centre is None:
+                    self.centre = self._smoothed  # until the user calibrates properly
+                offset = wrap(self._smoothed - self.centre)
+                steer = protocol.clamp(offset / cfg["range"], -1.0, 1.0)
+                if cfg["invert"]:
+                    steer = -steer
 
             dt = loop_start - prev_loop
             prev_loop = loop_start
@@ -217,6 +261,8 @@ class SenderEngine:
             else:
                 throttle, brake = cfg["throttle"], 0.0
 
+            self._read_echoes(loop_start)
+
             target = self.target
             if target is None and last_target is not None:
                 # Just pressed Stop: centre the car on the way out, keeping the
@@ -225,15 +271,24 @@ class SenderEngine:
                     self._send(last_target, 0.0, 0.0, 0.0, seq, gear_up, gear_down)
                     seq += 1
                     time.sleep(0.01)
-            if target is not None:
+            # Send as soon as anything changes (capped at MAX_RATE), and on a
+            # keepalive timer so the receiver failsafe stays happy while you
+            # hold still or the sensor stalls.
+            frame = (round(steer, 4), round(throttle, 3), round(brake, 3), gear_up, gear_down)
+            since = loop_start - last_send
+            if target is not None and ((frame != last_frame and since >= 1.0 / MAX_RATE)
+                                       or since >= KEEPALIVE):
                 self._send(target, steer, throttle, brake, seq, gear_up, gear_down)
+                self.send_rate.add(1, loop_start)
                 seq += 1
+                last_send = loop_start
+                last_frame = frame
             last_target = target
 
             st.update(steer=steer, throttle=throttle, brake=brake, roll=offset,
                       sent=seq, rejected=rejected, nodata=nodata)
 
-            slack = 1.0 / cfg["rate"] - (time.monotonic() - loop_start)
+            slack = POLL - (time.monotonic() - loop_start)
             if slack > 0:
                 time.sleep(slack)
 
@@ -242,6 +297,24 @@ class SenderEngine:
                 self._send(last_target, 0.0, 0.0, 0.0, seq, gear_up, gear_down)
                 seq += 1
                 time.sleep(0.01)
+
+    def _read_echoes(self, now):
+        """Collect the receiver's echoes (our ping) and answer its pings (its ping)."""
+        while True:
+            try:
+                data, addr = self._sock.recvfrom(64)
+            except OSError:  # BlockingIOError (nothing waiting), resets, etc.
+                return
+            pong = app_common.ping_to_pong(data)
+            if pong is not None:
+                try:
+                    self._sock.sendto(pong, addr)
+                except OSError:
+                    pass
+                continue
+            sent_at = app_common.unpack_echo(data)
+            if sent_at is not None and 0.0 <= now - sent_at < 2.0:
+                self.rtt.add((now - sent_at) * 1000.0, now)
 
     def _send(self, target, steer, throttle, brake, seq, gear_up, gear_down):
         try:
@@ -254,7 +327,7 @@ class SenderEngine:
 class SenderApp:
     def __init__(self, root):
         self.root = root
-        root.title("Tilt Wheel - Sender (Mac)")
+        root.title("Tilt Wheel - Sender (Mac)" + ("  [DEMO]" if DEMO else ""))
         root.resizable(False, False)
 
         self.keys = WindowKeys(root)
@@ -265,13 +338,11 @@ class SenderApp:
         self.host = tk.StringVar()
         self.port = tk.IntVar(value=protocol.DEFAULT_PORT)
         self.range = tk.DoubleVar(value=45.0)
-        self.lowpass = tk.DoubleVar(value=0.15)
+        self.min_cutoff = tk.DoubleVar(value=1.0)
+        self.beta = tk.DoubleVar(value=0.3)
         self.invert = tk.BooleanVar(value=False)
         self.use_keys = tk.BooleanVar(value=True)
         self.throttle = tk.DoubleVar(value=0.0)
-        self.accel_only = tk.BooleanVar(value=False)
-        self.lateral = tk.IntVar(value=0)
-        self.vertical = tk.IntVar(value=2)
         self.key_vars = {
             "throttle": tk.StringVar(value="Left Shift"),
             "brake": tk.StringVar(value="Return"),
@@ -280,6 +351,18 @@ class SenderApp:
         }
 
         pad = {"padx": 12, "pady": 5}
+
+        if DEMO:
+            demo = tk.LabelFrame(root, text="DEMO MODE: no motion sensor, drag to tilt",
+                                 fg="#b06000")
+            demo.pack(fill="x", **pad)
+            self.fake_tilt = tk.DoubleVar(value=0.0)
+            self.fake_tilt.trace_add("write", self._fake_tilt_changed)
+            tk.Scale(demo, variable=self.fake_tilt, from_=-90, to=90, resolution=0.5,
+                     orient="horizontal", length=330, label="Fake tilt (deg)").pack(
+                         side="left", padx=4)
+            tk.Button(demo, text="Centre", command=lambda: self.fake_tilt.set(0.0)).pack(
+                side="left", padx=4)
 
         # --- where to send ---
         conn = tk.LabelFrame(root, text="Windows PC")
@@ -309,25 +392,23 @@ class SenderApp:
             self.bars[key] = bar
         self.counters = tk.Label(live, text="", anchor="w", font=("Menlo", 10))
         self.counters.grid(row=4, column=0, columnspan=2, sticky="we")
+        self.ping_label = tk.Label(live, text="Ping: -- ms", anchor="w", fg="#888",
+                                   font=("Helvetica", 14, "bold"))
+        self.ping_label.grid(row=5, column=0, columnspan=2, sticky="we")
         tk.Button(live, text="Calibrate centre (hold neutral, then click)",
-                  command=self.calibrate).grid(row=5, column=0, columnspan=2,
+                  command=self.calibrate).grid(row=6, column=0, columnspan=2,
                                                sticky="we", pady=(4, 0))
 
         # --- tuning ---
         tuning = tk.LabelFrame(root, text="Steering (applies live)")
         tuning.pack(fill="x", **pad)
         app_common.labeled_scale(tuning, 0, "Range (deg)", self.range, 10, 90, 1)
-        app_common.labeled_scale(tuning, 1, "Smoothing", self.lowpass, 0.02, 1.0, 0.01)
+        app_common.labeled_scale(tuning, 1, "Steadiness\n(lower = steadier)",
+                                 self.min_cutoff, 0.1, 5.0, 0.1)
+        app_common.labeled_scale(tuning, 2, "Turn response\n(higher = less lag)",
+                                 self.beta, 0.0, 2.0, 0.05)
         tk.Checkbutton(tuning, text="Invert", variable=self.invert).grid(
-            row=2, column=0, sticky="w")
-        tk.Checkbutton(tuning, text="Accel-only, axes:", variable=self.accel_only).grid(
             row=3, column=0, sticky="w")
-        axes = tk.Frame(tuning)
-        axes.grid(row=3, column=1, sticky="w")
-        tk.Label(axes, text="lateral").pack(side="left")
-        tk.Spinbox(axes, from_=0, to=2, width=2, textvariable=self.lateral).pack(side="left")
-        tk.Label(axes, text=" vertical").pack(side="left")
-        tk.Spinbox(axes, from_=0, to=2, width=2, textvariable=self.vertical).pack(side="left")
 
         # --- pedals / keys ---
         pedals = tk.LabelFrame(root, text="Pedals and buttons (gears by default)")
@@ -355,16 +436,16 @@ class SenderApp:
         self.refresh()
 
     def settings(self):
-        def num(var, fallback):
-            try:
-                return var.get()
-            except tk.TclError:  # half-typed spinbox value
-                return fallback
-        return {"range": max(1.0, self.range.get()), "lowpass": self.lowpass.get(),
+        return {"range": max(1.0, self.range.get()),
+                "min_cutoff": max(0.05, self.min_cutoff.get()), "beta": self.beta.get(),
                 "invert": self.invert.get(), "use_keys": self.use_keys.get(),
-                "throttle": self.throttle.get(), "accel_only": self.accel_only.get(),
-                "lateral": num(self.lateral, 0), "vertical": num(self.vertical, 2),
-                "rate": 100.0}
+                "throttle": self.throttle.get()}
+
+    def _fake_tilt_changed(self, *_):
+        try:
+            demo_imu.TILT["roll"] = self.fake_tilt.get()
+        except tk.TclError:
+            pass
 
     def pick_pc(self, _event=None):
         sel = self.pc_list.curselection()
@@ -390,10 +471,6 @@ class SenderApp:
             messagebox.showerror("Tilt Wheel", f"{host} is not a local network address.\n\n"
                                  "Use the address shown at the top of the Windows receiver "
                                  "app (192.168.x.x, 10.x.x.x or 172.16-31.x.x).")
-            return
-        s = self.settings()
-        if s["accel_only"] and s["lateral"] == s["vertical"]:
-            messagebox.showerror("Tilt Wheel", "Lateral and vertical axes must differ.")
             return
         self.engine.target = (host, int(self.port.get()))
         self.send_btn.config(text="Stop sending")
@@ -444,7 +521,13 @@ class SenderApp:
                         f"Sending to {eng.target[0]}  -  {st['mode']}"))
                 self.counters.config(text=(
                     f"roll={st['roll']:+6.1f}d  sent={st['sent']}  "
+                    f"{eng.send_rate.count()} Hz  "
                     f"rejected={st['rejected']}  nodata={st['nodata']}"))
+                if eng.target is None:
+                    self.ping_label.config(text="Ping: -- ms", fg="#888")
+                else:
+                    text, color = app_common.ping_display(eng.rtt)
+                    self.ping_label.config(text=text, fg=color)
         self._timer = self.root.after(50, self.refresh)
 
     def close(self):

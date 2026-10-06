@@ -64,6 +64,8 @@ class ReceiverEngine:
                        "linked": False, "sender": None}
         self.error = None
         self.test_presses = []  # GUI appends "button_1"/"button_2" to press once
+        self.ping = app_common.RollingStats(1.0)  # round-trip ms to the Mac
+        self._sender_addr = None
         self._stop = threading.Event()
         self._thread = None
 
@@ -80,7 +82,7 @@ class ReceiverEngine:
         pad = sock = beacon = None
         try:
             pad = None if self.dry_run else vg.VX360Gamepad()
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock = app_common.low_latency_socket()
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("0.0.0.0", self.port))
             sock.setblocking(False)
@@ -107,6 +109,7 @@ class ReceiverEngine:
         steer = throttle = brake = 0.0
         received = dropped = shifts = 0
         last_seq = -1
+        next_ping = 0.0
         st = self.status
 
         while not self._stop.is_set():
@@ -127,9 +130,34 @@ class ReceiverEngine:
                     data, addr = sock.recvfrom(protocol.PACKET_SIZE * 4)
                 except (BlockingIOError, ConnectionResetError):
                     break
+                sent_at = app_common.unpack_pong(data)
+                if sent_at is not None:
+                    if 0.0 <= now - sent_at < 2.0:
+                        self.ping.add((time.monotonic() - sent_at) * 1000.0)
+                    continue
                 frame = protocol.unpack(data)
                 if frame is not None:
-                    newest, sender = frame, addr[0]
+                    newest, sender = frame, addr
+                    # Echo the sender's own timestamp so it can measure the
+                    # round trip. Done per frame, before any processing, so
+                    # the number reflects the network rather than this loop.
+                    try:
+                        sock.sendto(app_common.pack_echo(frame["timestamp"]), addr)
+                    except OSError:
+                        pass
+            if sender is not None:
+                self._sender_addr = sender
+                sender = sender[0]
+
+            # Our own ping to the Mac, ~10 per second, so this window can show
+            # a ping too. Only while linked: there's nobody to ping otherwise.
+            if (self._sender_addr is not None and not failsafe.is_stale()
+                    and now >= next_ping):
+                next_ping = now + 0.1
+                try:
+                    sock.sendto(app_common.pack_ping(time.monotonic()), self._sender_addr)
+                except OSError:
+                    pass
 
             if newest is not None:
                 received += 1
@@ -167,7 +195,7 @@ class ReceiverEngine:
 
             st.update(steer=steer, throttle=throttle, brake=brake, frames=received,
                       dropped=dropped, shifts=shifts, linked=not stale)
-            time.sleep(0.002)
+            time.sleep(0.001)  # ~1.5 ms in practice; frames wait at most that long
 
 
 class FakeSender:
@@ -251,7 +279,10 @@ class ReceiverApp:
             bar.grid(row=row, column=1, pady=2)
             self.bars[key] = bar
         self.counters = tk.Label(root, text="", anchor="w", font=("Consolas", 9))
-        self.counters.pack(fill="x", **pad)
+        self.counters.pack(fill="x", padx=12, pady=(6, 0))
+        self.ping_label = tk.Label(root, text="Ping: -- ms", anchor="w", fg="#888",
+                                   font=("Segoe UI", 11, "bold"))
+        self.ping_label.pack(fill="x", padx=12, pady=(0, 6))
 
         tuning = tk.LabelFrame(root, text="Tuning (applies live)")
         tuning.pack(fill="x", **pad)
@@ -379,6 +410,7 @@ class ReceiverApp:
         self.engine.stop()
         self.engine = None
         self.start_btn.config(text="Start")
+        self.ping_label.config(text="Ping: -- ms", fg="#888")
         for bar in self.bars.values():
             bar.set(0.0)
 
@@ -422,6 +454,8 @@ class ReceiverApp:
                 self.counters.config(text=(
                     f"steer={st['steer']:+.3f}  frames={st['frames']}  "
                     f"dropped={st['dropped']}  shifts={st['shifts']}"))
+                text, color = app_common.ping_display(eng.ping)
+                self.ping_label.config(text=text, fg=color)
         elif vg is not None:
             self.status.config(text="Stopped", fg="#666")
         self._timer = self.root.after(50, self.refresh)

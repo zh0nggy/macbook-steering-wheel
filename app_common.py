@@ -6,13 +6,153 @@ every PC it hears. This is a separate port and message from protocol.py, so
 the frozen wire format is untouched.
 """
 
+import math
 import socket
+import struct
 import threading
 import time
 import tkinter as tk
 
 BEACON_PORT = 5006
 BEACON_MAGIC = b"TILTWHEEL1"
+
+# Latency probe: the receiver sends each frame's timestamp straight back, and
+# the sender compares it with its own clock. Only the sender's clock is used,
+# so the two machines' clocks never need to agree. Separate from protocol.py.
+ECHO_MAGIC = b"TWECHO"
+_ECHO = struct.Struct("!6sd")
+ECHO_SIZE = _ECHO.size
+
+
+def pack_echo(timestamp):
+    return _ECHO.pack(ECHO_MAGIC, timestamp)
+
+
+def unpack_echo(data):
+    """The echoed timestamp, or None if this isn't an echo packet."""
+    if len(data) != ECHO_SIZE:
+        return None
+    magic, timestamp = _ECHO.unpack(data)
+    return timestamp if magic == ECHO_MAGIC else None
+
+
+# Reverse probe, so the Windows side can show a ping too: the receiver sends a
+# PING with its own clock, the sender bounces the same bytes back as a PONG.
+PING_MAGIC = b"TWPING"
+PONG_MAGIC = b"TWPONG"
+
+
+def pack_ping(timestamp):
+    return _ECHO.pack(PING_MAGIC, timestamp)
+
+
+def ping_to_pong(data):
+    """If `data` is a PING, the matching PONG bytes to send back; else None."""
+    if len(data) == ECHO_SIZE and data[:6] == PING_MAGIC:
+        return PONG_MAGIC + data[6:]
+    return None
+
+
+def unpack_pong(data):
+    """The receiver's original timestamp from a PONG, or None."""
+    if len(data) != ECHO_SIZE:
+        return None
+    magic, timestamp = _ECHO.unpack(data)
+    return timestamp if magic == PONG_MAGIC else None
+
+
+def ping_display(stats):
+    """Text + colour for a ping readout from a RollingStats of milliseconds."""
+    summary = stats.summary()
+    if summary is None:
+        return "Ping: -- ms", "#888"
+    avg, worst = summary
+    # Under ~10 ms is excellent; over ~30 ms steering starts to feel delayed.
+    color = "#1d7a35" if avg < 10 else "#b06000" if avg < 30 else "#c03030"
+    return f"Ping: {avg:.1f} ms  (max {worst:.1f})", color
+
+
+def low_latency_socket():
+    """UDP socket marked as real-time traffic (DSCP EF, the "voice" class).
+
+    WiFi routers with WMM, which is nearly all of them, put these packets in
+    the highest-priority queue, so they wait less behind downloads and video.
+    It's a hint: macOS honours it, Windows may ignore it, and nothing breaks
+    either way.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, 0xB8)
+    except (OSError, AttributeError):
+        pass
+    return sock
+
+
+class OneEuroFilter:
+    """Adaptive low-pass filter (Casiez et al., "1 Euro Filter", CHI 2012).
+
+    A fixed smoothing factor forces a trade: enough smoothing to hide jitter
+    when you hold still also adds lag when you turn. This filter changes its
+    cutoff with speed: heavy smoothing when still (min_cutoff), light when
+    moving fast (cutoff rises by beta per degree/second).
+    """
+
+    def __init__(self, min_cutoff=1.0, beta=0.3, d_cutoff=1.0):
+        self.min_cutoff = min_cutoff
+        self.beta = beta
+        self.d_cutoff = d_cutoff
+        self.value = None
+        self._speed = 0.0
+
+    @staticmethod
+    def _alpha(cutoff, dt):
+        tau = 1.0 / (2.0 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def reset(self, value=None):
+        self.value = value
+        self._speed = 0.0
+
+    def update(self, x, dt):
+        if self.value is None or dt <= 0.0:
+            self.value = x
+            return x
+        speed = (x - self.value) / dt
+        self._speed += (speed - self._speed) * self._alpha(self.d_cutoff, dt)
+        cutoff = self.min_cutoff + self.beta * abs(self._speed)
+        self.value += (x - self.value) * self._alpha(cutoff, dt)
+        return self.value
+
+
+class RollingStats:
+    """Average and maximum of samples from the last `window` seconds."""
+
+    def __init__(self, window=1.0):
+        self.window = window
+        self._samples = []
+
+    def add(self, value, now=None):
+        now = time.monotonic() if now is None else now
+        self._samples.append((now, value))
+        self._trim(now)
+
+    def _trim(self, now):
+        cutoff = now - self.window
+        while self._samples and self._samples[0][0] < cutoff:
+            self._samples.pop(0)
+
+    def count(self, now=None):
+        """How many samples arrived within the window (a rate, for a 1 s window)."""
+        self._trim(time.monotonic() if now is None else now)
+        return len(self._samples)
+
+    def summary(self, now=None):
+        """(average, maximum), or None if nothing arrived within the window."""
+        self._trim(time.monotonic() if now is None else now)
+        if not self._samples:
+            return None
+        values = [v for _t, v in self._samples]
+        return sum(values) / len(values), max(values)
 
 
 def local_ip():
@@ -138,9 +278,29 @@ class Bar(tk.Canvas):
 
 
 def labeled_scale(parent, row, text, var, low, high, step):
-    """Label + slider + live value readout, laid out on one grid row."""
-    tk.Label(parent, text=text, anchor="w").grid(row=row, column=0, sticky="w", padx=(0, 8))
+    """Label + slider + live value readout, laid out on one grid row.
+
+    The value goes in its own label to the right rather than Tk's built-in
+    readout above the bar, so the bar sits vertically centred on the label
+    text (including two-line labels).
+    """
+    tk.Label(parent, text=text, anchor="w", justify="left").grid(
+        row=row, column=0, sticky="w", padx=(0, 8), pady=3)
     tk.Scale(
         parent, variable=var, from_=low, to=high, resolution=step,
-        orient="horizontal", length=200, showvalue=True,
+        orient="horizontal", length=200, showvalue=False,
     ).grid(row=row, column=1, sticky="we")
+
+    # Format to the slider's step, e.g. step 0.05 -> "0.30", step 1 -> "45".
+    decimals = max(0, len(f"{step:g}".partition(".")[2]))
+    value = tk.Label(parent, width=5, anchor="w")
+    value.grid(row=row, column=2, sticky="w", padx=(6, 0))
+
+    def show(*_):
+        try:
+            value.config(text=f"{var.get():.{decimals}f}")
+        except tk.TclError:
+            pass
+
+    var.trace_add("write", show)
+    show()

@@ -34,23 +34,33 @@ To check the virtual controller works, press **Test: fake sweep**, then open Win
    ```bash
    python3 -m pip install macimu
    ```
-3. Get the code. Download the ZIP from GitHub and unzip it, or:
+3. Get the code. On the GitHub page click **Code → Download ZIP**, then open the ZIP in your Downloads folder to unzip it. This creates a folder called `macbook-steering-wheel-main`.
+4. Open Terminal (Cmd+Space, type "Terminal") and run these three commands:
    ```bash
-   git clone https://github.com/zh0nggy/macbook-steering-wheel.git
-   ```
-4. Open Terminal in the project folder. Type `cd `, drag the folder into the Terminal window, and press Enter. Then run:
-   ```bash
+   cd ~/Downloads/macbook-steering-wheel-main
    chmod +x "Start Sender.command"
    xattr -dr com.apple.quarantine .
    ```
-   The first command makes the launcher runnable. The second stops macOS from blocking it with "Apple could not verify..." (this happens with downloaded files).
+   The first goes into the project folder. The second makes the launcher runnable. The third stops macOS from blocking it with "Apple could not verify..." (this happens with downloaded files).
+
+   If you unzipped it somewhere else, or used `git clone`, change the `cd` line to match. You can also type `cd `, drag the folder into Terminal, and press Enter.
 5. Double-click **`Start Sender.command`** and enter your Mac password. Reading the motion sensor needs admin rights.
 
-If you'd rather skip the launcher, run this from the project folder instead:
+If you'd rather skip the launcher, run this from the project folder (after the `cd` above) instead:
 
 ```bash
 sudo python3 sender_app.py
 ```
+
+## Trying it without a MacBook
+
+You can run the Mac app on Windows, with a slider standing in for the motion sensor:
+
+```bash
+python sender_app.py --demo
+```
+
+Drag **Fake tilt** to steer. Everything else (filtering, keys, network, ping) is the real code, so you can test the whole setup on one PC: open the receiver, press Start, then pick the PC in the demo window (or type `127.0.0.1`) and press **Start sending**.
 
 ## Playing
 
@@ -91,11 +101,18 @@ Settings are saved to `receiver_settings.json` and reload on the next start.
 | Setting | Where | What it does |
 |---|---|---|
 | Range | Mac | Degrees of tilt for full lock. Lower means less movement needed. Adjust this first. |
-| Smoothing | Mac | Higher is smoother but laggier. |
+| Steadiness | Mac | How much jitter is smoothed out while you hold still. Lower is steadier. |
+| Turn response | Mac | How quickly smoothing backs off when you turn. Higher means less lag but more wobble. |
 | Deadzone | PC | Ignores small wobbles around centre. |
 | Gamma | PC | Above 1 gives finer control near centre. |
 | Smoothing | PC | Extra smoothing. Leave at 0 unless steering is jittery. |
 | Invert | Either | Flips steering direction. |
+
+### Latency
+
+Both windows show a **Ping** readout under the stats line: the round-trip time between the two machines, averaged over the last second, with the worst value in brackets. Each side measures it on its own, so the two numbers can differ slightly. The Mac also shows how many packets per second it's sending. Green (under 10 ms) is good. Orange or red means WiFi is the bottleneck. Try a less busy network, or turn on the PC's Mobile Hotspot and connect the Mac to it.
+
+The rate is higher while you're turning (up to 250 per second) and drops to about 100 per second when you hold still.
 
 Racing games often add their own controller smoothing or "steering assist". Turn those down in the game's settings, or correct steering can feel delayed.
 
@@ -125,5 +142,6 @@ Racing games often add their own controller smoothing or "steering assist". Turn
 | `app_common.py` | Both | Network discovery and shared UI pieces |
 | `protocol.py` | Both | Packet format. Keep the same copy on both machines. |
 | `imu_reader.py` | Mac | Reads the motion sensor |
+| `demo_imu.py` | Any | Fake sensor for `sender_app.py --demo` |
 | `imu_probe.py` | Mac | Diagnostic: `sudo python3 imu_probe.py` checks the sensor, gyro and axes |
 | `mac_sender.py`, `pad_receiver.py`, `mock_sender.py`, `key_input.py` | | Terminal versions of the apps. The apps reuse their code. |
