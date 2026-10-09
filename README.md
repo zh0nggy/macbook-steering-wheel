@@ -1,9 +1,9 @@
 # MacBook Steering Wheel
 
-Tilt your MacBook to steer in PC racing games. The Mac reads its built-in motion sensor and sends steering, throttle, brake and gear presses over WiFi to a Windows PC. The PC turns them into a virtual Xbox 360 controller, so the game sees an ordinary gamepad.
+Tilt your MacBook to steer in PC racing games. The Mac reads its built-in motion sensor and sends steering, throttle, brake and gear presses over WiFi or a USB-C cable to a Windows PC. The PC turns them into a virtual Xbox 360 controller, so the game sees an ordinary gamepad.
 
 ```
-MacBook (sender_app.py)  --WiFi-->  Windows PC (receiver_app.pyw)  -->  virtual Xbox pad  -->  game
+MacBook (sender_app.py)  --WiFi or USB-C-->  Windows PC (receiver_app.pyw)  -->  virtual Xbox pad  -->  game
 ```
 
 Works with any game that supports an Xbox controller.
@@ -12,7 +12,7 @@ Works with any game that supports an Xbox controller.
 
 - An Apple Silicon MacBook with a motion sensor (support depends on the model).
 - A Windows 10/11 PC that runs the game.
-- Both machines on the same WiFi network.
+- Both machines on the same WiFi network, or connected by a USB-C cable (see [Connecting with a USB-C cable](#connecting-with-a-usb-c-cable)).
 
 ## Windows setup
 
@@ -85,6 +85,25 @@ Keys only work while the sender window is in front. You can change them in the s
 
 If the Mac app closes or loses connection, the receiver centres the steering and releases the pedals within a quarter of a second.
 
+## Connecting with a USB-C cable
+
+A cable is faster and steadier than WiFi, and works where WiFi blocks devices from reaching each other (common on school and office networks). It creates a small direct network between the two machines, and the apps use it automatically.
+
+**What you need:**
+- A PC USB-C port with **Thunderbolt 3/4 or USB4** (look for a lightning-bolt or "40Gbps" mark next to the port).
+- A **Thunderbolt or USB4 cable**. Most phone charging cables won't work.
+
+If the PC has no Thunderbolt/USB4 port, use two **USB-C to Ethernet adapters** and an Ethernet cable between them instead. This works with any USB port.
+
+**Steps:**
+1. Plug the cable into both machines.
+2. On the Mac, open System Settings → Network. **Thunderbolt Bridge** (or the Ethernet adapter) should show as connected. It gets an address starting `169.254.` on its own after a few seconds.
+3. On Windows, the cable appears as a new network. If asked whether the PC should be discoverable, choose **Yes / Private**.
+4. Open the receiver and press **Start**. The header shows a **USB-C cable: 169.254.x.x** line.
+5. In the Mac app, the PC shows up as **USB-C cable** and is picked automatically. The status line reads "Sending to ... via USB-C cable".
+
+You can leave WiFi on. The cable is listed first and preferred.
+
 ## Game mapping
 
 The receiver decides which part of the Xbox controller each input drives:
@@ -124,7 +143,8 @@ Racing games often add their own controller smoothing or "steering assist". Turn
 | Mac app says it can't load macimu | Run `sudo python3 -m pip install macimu`. |
 | Permission / root error | Open the app with `Start Sender.command` or `sudo python3 sender_app.py`. |
 | PC doesn't appear in the Mac's list | Type the IP from the receiver window instead. |
-| Receiver stays on "Waiting for the Mac..." | Check that both machines are on the same WiFi (not a guest network), and that Python is allowed through Windows Firewall. School and office WiFi often blocks devices from talking to each other; try a phone hotspot. |
+| Receiver stays on "Waiting for the Mac..." | Check that both machines are on the same WiFi (not a guest network), and that Python is allowed through Windows Firewall. School and office WiFi often blocks devices from talking to each other; try a phone hotspot or a USB-C cable. |
+| USB-C cable plugged in but no "USB-C cable" line | Wait about 10 seconds. Check the cable is Thunderbolt or USB4 (not a charging cable) and that the PC port has the lightning-bolt or "40Gbps" mark. On Windows, allow Python through the firewall on **Public** networks too. |
 | No controller in `joy.cpl` | ViGEmBus isn't installed, or needs a reboot. |
 | Game doesn't react | Start the receiver before the game, then restart the game. Check the game's controller bindings match the mapping. |
 | Steering goes the wrong way | Tick **Invert**. |

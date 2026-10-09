@@ -66,8 +66,14 @@ class ReceiverEngine:
         self.test_presses = []  # GUI appends "button_1"/"button_2" to press once
         self.ping = app_common.RollingStats(1.0)  # round-trip ms to the Mac
         self._sender_addr = None
+        self._beacon = None
         self._stop = threading.Event()
         self._thread = None
+
+    def addresses(self):
+        """[(adapter, ip)] this PC is announcing itself on (WiFi, USB-C, ...)."""
+        beacon = self._beacon
+        return list(beacon.addresses) if beacon is not None else []
 
     def start(self):
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -86,7 +92,7 @@ class ReceiverEngine:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("0.0.0.0", self.port))
             sock.setblocking(False)
-            beacon = app_common.BeaconSender(self.port)
+            beacon = self._beacon = app_common.BeaconSender(self.port)
             self._loop(pad, sock, beacon)
         except Exception as exc:
             self.error = f"{type(exc).__name__}: {exc}"
@@ -97,6 +103,7 @@ class ReceiverEngine:
             if sock is not None:
                 sock.close()
             if beacon is not None:
+                self._beacon = None
                 beacon.close()
 
     def _loop(self, pad, sock, beacon):
@@ -249,10 +256,13 @@ class ReceiverApp:
 
         top = tk.Frame(root)
         top.pack(fill="x", **pad)
-        tk.Label(top, text=f"This PC: {app_common.local_ip()}",
-                 font=("Segoe UI", 11, "bold")).pack(side="left")
-        tk.Label(top, text="  port").pack(side="left")
-        tk.Entry(top, textvariable=self.port, width=6).pack(side="left")
+        self.ip_label = tk.Label(top, text=self.address_text(app_common.interfaces()),
+                                 font=("Segoe UI", 11, "bold"), justify="left", anchor="w")
+        self.ip_label.pack(side="left")
+        port_box = tk.Frame(top)
+        port_box.pack(side="right", anchor="n")
+        tk.Label(port_box, text="port").pack(side="left")
+        tk.Entry(port_box, textvariable=self.port, width=6).pack(side="left")
 
         controls = tk.Frame(root)
         controls.pack(fill="x", **pad)
@@ -330,6 +340,16 @@ class ReceiverApp:
 
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.refresh()
+
+    @staticmethod
+    def address_text(found):
+        """Header text: one line per network, cable first, e.g.
+        'USB-C cable: 169.254.37.114' / 'WiFi / LAN: 10.39.44.93'."""
+        ips = sorted({entry[1] for entry in found},
+                     key=lambda ip: (not app_common.is_link_local(ip), ip))
+        if not ips:
+            return "This PC: no network"
+        return "\n".join(f"{app_common.link_kind(ip)}: {ip}" for ip in ips)
 
     def mapping(self):
         return {role: var.get() for role, var in self.map_vars.items()}
@@ -442,6 +462,10 @@ class ReceiverApp:
                 messagebox.showerror("Tilt Wheel", error + hint)
             else:
                 eng.settings = self.settings()
+                # Picks up a USB-C cable being plugged in (the beacon rescans).
+                text = self.address_text(eng.addresses())
+                if text != self.ip_label.cget("text"):
+                    self.ip_label.config(text=text)
                 st = eng.status
                 for key, bar in self.bars.items():
                     bar.set(st[key])
