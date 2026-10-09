@@ -316,12 +316,16 @@ class DebugWindow:
         for row, (name, value, meaning) in enumerate(self.read()):
             tk.Label(self.win, text=name, anchor="w", font=("Helvetica", 10, "bold")).grid(
                 row=row, column=0, sticky="w", padx=(10, 6), pady=2)
-            label = tk.Label(self.win, text=value, anchor="e", width=10,
+            # No fixed width: a right-aligned label narrower than its text
+            # clips the START ("gravity" -> "avity"). The grid column sizes
+            # itself to the widest value instead, and grows if one gets longer.
+            label = tk.Label(self.win, text=value, anchor="e",
                              font=("Menlo", 10) if sys.platform == "darwin" else ("Consolas", 10))
             label.grid(row=row, column=1, sticky="e", padx=6)
             tk.Label(self.win, text=meaning, anchor="w", fg=muted(self.win)).grid(
                 row=row, column=2, sticky="w", padx=(6, 10))
             self.values[name] = label
+        self.win.columnconfigure(1, minsize=90)  # steady width as values change
         self._tick()
 
     def _tick(self):

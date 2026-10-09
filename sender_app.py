@@ -499,7 +499,8 @@ class SenderApp:
         st = eng.status
         rtt = eng.rtt.summary()
         return [
-            ("mode", st["mode"].split(" (")[0], "how tilt is read: fused or gravity only"),
+            ("mode", "fused" if st["mode"].startswith("fused") else "gravity",
+             "how tilt is read: fused (gyro + accel) or gravity"),
             ("roll", f"{st['roll']:+.1f} deg", "tilt from your calibrated centre"),
             ("steer", f"{st['steer']:+.3f}", "-1 full left .. +1 full right"),
             ("rate", f"{eng.send_rate.count()} Hz", "packets sent in the last second"),
