@@ -89,8 +89,8 @@ Every button can be bound: A/B/X/Y, both bumpers, both triggers, View, Menu, the
 
 | Key | Controller | Typical use |
 |---|---|---|
-| Left Shift | Left trigger | Brake |
-| Right Shift | Right trigger | Throttle |
+| Right Shift | Left trigger | Brake |
+| Left Shift | Right trigger | Throttle |
 | Tab | A | Gear up (Assetto Corsa) |
 | Return | X | Gear down (Assetto Corsa) |
 

@@ -48,7 +48,7 @@ TARGET_NAMES = {
 }
 
 # Defaults: pedals on the two Shift keys, gears on Tab (up) / Return (down).
-DEFAULT_BINDINGS = {"LT": "Shift_L", "RT": "Shift_R", "X": "Return", "A": "Tab"}
+DEFAULT_BINDINGS = {"LT": "Shift_R", "RT": "Shift_L", "X": "Return", "A": "Tab"}
 
 
 def key_label(keysym):
