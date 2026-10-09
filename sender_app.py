@@ -467,12 +467,10 @@ class SenderApp:
                                 "If the list is empty, open the receiver app on Windows "
                                 "and press Start.")
             return
-        # 169.254.x.x is a direct cable link (USB-C / Thunderbolt), also local.
-        if is_private(host) is False and not app_common.is_link_local(host):
+        if is_private(host) is False:
             messagebox.showerror("Tilt Wheel", f"{host} is not a local network address.\n\n"
                                  "Use the address shown at the top of the Windows receiver "
-                                 "app (192.168.x.x, 10.x.x.x, 172.16-31.x.x, or 169.254.x.x "
-                                 "for a USB-C cable).")
+                                 "app (192.168.x.x, 10.x.x.x or 172.16-31.x.x).")
             return
         self.engine.target = (host, int(self.port.get()))
         self.send_btn.config(text="Stop sending")
@@ -487,24 +485,16 @@ class SenderApp:
     def refresh(self):
         # Discovered PCs
         self.pcs = self.listener.recent()
-        labels = [f"{name}  ({ip})  - {app_common.link_kind(ip)}"
-                  for ip, _port, name in self.pcs]
+        labels = [f"{name}  ({ip})" for ip, _port, name in self.pcs]
         if list(self.pc_list.get(0, "end")) != labels:
             self.pc_list.delete(0, "end")
             for label in labels:
                 self.pc_list.insert("end", label)
             if not labels:
                 self.pc_list.insert("end", "Looking for the Windows receiver...")
-        # Fill in the best link automatically (cable first, see recent()), and
-        # switch an idle WiFi pick to the cable if one gets plugged in.
-        if self.pcs and (self.engine is None or self.engine.target is None):
-            best_ip, best_port, _name = self.pcs[0]
-            current = self.host.get().strip()
-            known = {ip for ip, _p, _n in self.pcs}
-            if not current or (current in known and app_common.is_link_local(best_ip)
-                               and not app_common.is_link_local(current)):
-                self.host.set(best_ip)
-                self.port.set(best_port)
+        if len(self.pcs) == 1 and not self.host.get():
+            self.host.set(self.pcs[0][0])
+            self.port.set(self.pcs[0][1])
 
         for role, var in self.key_vars.items():
             self.keys.bindings[role] = KEY_CHOICES[var.get()]
@@ -528,8 +518,7 @@ class SenderApp:
                     self.status.config(text=f"Sensor: {st['mode']}  -  not sending", fg="#666")
                 else:
                     self.status.config(fg="#1d7a35", text=(
-                        f"Sending to {eng.target[0]} via "
-                        f"{app_common.link_kind(eng.target[0])}  -  {st['mode']}"))
+                        f"Sending to {eng.target[0]}  -  {st['mode']}"))
                 self.counters.config(text=(
                     f"roll={st['roll']:+6.1f}d  sent={st['sent']}  "
                     f"{eng.send_rate.count()} Hz  "
