@@ -366,7 +366,7 @@ class SenderApp:
         self.range = tk.DoubleVar(value=45.0)
         self.min_cutoff = tk.DoubleVar(value=1.0)
         self.beta = tk.DoubleVar(value=0.3)
-        self.invert = tk.BooleanVar(value=False)
+        self.invert = tk.BooleanVar(value=True)
         self.throttle = tk.DoubleVar(value=0.0)
         bindings = self.load_bindings()
 

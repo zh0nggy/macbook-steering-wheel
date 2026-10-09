@@ -89,10 +89,12 @@ Every button can be bound: A/B/X/Y, both bumpers, both triggers, View, Menu, the
 
 | Key | Controller | Typical use |
 |---|---|---|
-| Left Shift | Right trigger | Throttle |
-| Return | Left trigger | Brake |
+| Left Shift | Left trigger | Brake |
+| Right Shift | Right trigger | Throttle |
 | Tab | A | Gear up (Assetto Corsa) |
-| Right Shift | X | Gear down (Assetto Corsa) |
+| Return | X | Gear down (Assetto Corsa) |
+
+**Invert** steering is on by default. Untick it if the car turns the wrong way. If you set keys before, press **Reset to defaults** to switch to these, since saved keys take priority.
 
 While a key is held, its button lights up blue, so you can see exactly what's being sent. Keys only work while the sender window is in front. **Fixed throttle** holds the right trigger at a set level (cruise control); 0 turns it off.
 

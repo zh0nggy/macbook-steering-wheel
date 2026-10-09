@@ -47,8 +47,8 @@ TARGET_NAMES = {
     "DPAD_LEFT": "D-pad left", "DPAD_RIGHT": "D-pad right",
 }
 
-# Defaults: pedals and gears where the old hardcoded keys were.
-DEFAULT_BINDINGS = {"RT": "Shift_L", "LT": "Return", "A": "Tab", "X": "Shift_R"}
+# Defaults: pedals on the two Shift keys, gears on Tab (up) / Return (down).
+DEFAULT_BINDINGS = {"LT": "Shift_L", "RT": "Shift_R", "X": "Return", "A": "Tab"}
 
 
 def key_label(keysym):
