@@ -190,15 +190,12 @@ class ControllerView(tk.Frame):
                      (cx + a - 10, cy))
         c.create_rectangle(cx - w, cy - w, cx + w, cy + w, fill=self.colors["ring"], outline=self.colors["outline"])
 
-        # Face buttons in the usual diamond, with coloured letters beside them.
+        # Face buttons in the usual diamond. Unbound, each shows its own
+        # letter inside (see _refresh); bound, it shows the key instead.
         fx, fy, d, r = 334, 140, 27, 16
         for target, (x, y) in (("Y", (fx, fy - d)), ("B", (fx + d, fy)),
                                ("A", (fx, fy + d)), ("X", (fx - d, fy))):
             self._button(target, c.create_oval(x - r, y - r, x + r, y + r), (x, y))
-            dx = {"X": -r - 7, "B": r + 7}.get(target, 0)
-            dy = {"Y": -r - 7, "A": r + 7}.get(target, 0)
-            c.create_text(x + dx, y + dy, text=target, fill=FACE_COLORS[target],
-                          font=("Helvetica", 9, "bold"))
 
         # Centre: Xbox button with View / Menu either side.
         self._button("GUIDE", c.create_oval(mid - 17, 96, mid + 17, 130), (mid, 113))
@@ -260,14 +257,18 @@ class ControllerView(tk.Frame):
         wide = target in ("LT", "RT", "LB", "RB")
         text = "?" if target == self.picking else (
             WIDE_LABELS.get(key, key_label(key)) if wide else key_label(key))
+        font = ("Helvetica", 8)
         # Dark text on the light yellow "press a key" fill, else palette text.
         if state == "held":
             color = "white"
         elif state == "picking":
             color = "#222"
+        elif key is None and target in FACE_COLORS:
+            # Unbound face button: show its own letter, in its colour.
+            text, color, font = target, FACE_COLORS[target], ("Helvetica", 11, "bold")
         else:
             color = col["key_text"]
-        self.canvas.itemconfig(self.labels[target], text=text, fill=color)
+        self.canvas.itemconfig(self.labels[target], text=text, fill=color, font=font)
 
     def _refresh_all(self):
         for target in self.shapes:
