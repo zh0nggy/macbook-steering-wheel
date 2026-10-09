@@ -419,11 +419,13 @@ class SenderApp:
             bar = app_common.Bar(live, color=color, centered=centered)
             bar.grid(row=row, column=1, pady=2)
             self.bars[key] = bar
-        self.counters = tk.Label(live, text="", anchor="w", font=("Menlo", 10))
-        self.counters.grid(row=4, column=0, columnspan=2, sticky="we")
-        self.ping_label = tk.Label(live, text="Ping: -- ms", anchor="w", fg="#888",
+        ping_row = tk.Frame(live)
+        ping_row.grid(row=4, column=0, columnspan=2, sticky="we", pady=(4, 0))
+        self.ping_label = tk.Label(ping_row, text="Ping: -- ms", anchor="w", fg="#888",
                                    font=("Helvetica", 14, "bold"))
-        self.ping_label.grid(row=5, column=0, columnspan=2, sticky="we")
+        self.ping_label.pack(side="left")
+        self.debug = app_common.DebugWindow(root, "Tilt Wheel - Sender debug", self._debug_rows)
+        tk.Button(ping_row, text="Debug", command=self.debug.open).pack(side="right")
         tk.Button(live, text="Calibrate centre (hold neutral, then click)",
                   command=self.calibrate).grid(row=6, column=0, columnspan=2,
                                                sticky="we", pady=(4, 0))
@@ -488,6 +490,25 @@ class SenderApp:
         valid = set(controller_view.TARGET_NAMES)
         bindings = {t: k for t, k in saved.items() if t in valid and isinstance(k, str)}
         return bindings or dict(controller_view.DEFAULT_BINDINGS)
+
+    def _debug_rows(self):
+        """Rows for the Debug window: (name, value, what it means)."""
+        eng = self.engine
+        if eng is None:
+            return [("status", "no sensor", "the motion sensor isn't running")]
+        st = eng.status
+        rtt = eng.rtt.summary()
+        return [
+            ("mode", st["mode"].split(" (")[0], "how tilt is read: fused or gravity only"),
+            ("roll", f"{st['roll']:+.1f} deg", "tilt from your calibrated centre"),
+            ("steer", f"{st['steer']:+.3f}", "-1 full left .. +1 full right"),
+            ("rate", f"{eng.send_rate.count()} Hz", "packets sent in the last second"),
+            ("sent", f"{st['sent']}", "packets sent since the app opened"),
+            ("ping avg", f"{rtt[0]:.1f} ms" if rtt else "--", "round trip to the PC"),
+            ("ping max", f"{rtt[1]:.1f} ms" if rtt else "--", "worst round trip, last second"),
+            ("rejected", f"{st['rejected']}", "readings skipped: laptop jolted, not tilted"),
+            ("nodata", f"{st['nodata']}", "checks with no new reading yet (normal)"),
+        ]
 
     def _fill_controls(self):
         """Stretch the controller so the Controls box has no empty band.
@@ -594,10 +615,6 @@ class SenderApp:
                 else:
                     self.status.config(fg="#1d7a35", text=(
                         f"Sending to {eng.target[0]}  -  {st['mode']}"))
-                self.counters.config(text=(
-                    f"roll={st['roll']:+6.1f}d  sent={st['sent']}  "
-                    f"{eng.send_rate.count()} Hz  "
-                    f"rejected={st['rejected']}  nodata={st['nodata']}"))
                 if eng.target is None:
                     self.ping_label.config(text="Ping: -- ms", fg="#888")
                 else:

@@ -260,11 +260,13 @@ class ReceiverApp:
             bar = app_common.Bar(meters, color=color, centered=centered, width=300)
             bar.grid(row=row, column=1, pady=2)
             self.bars[key] = bar
-        self.counters = tk.Label(root, text="", anchor="w", font=("Consolas", 9))
-        self.counters.pack(fill="x", padx=12, pady=(6, 0))
-        self.ping_label = tk.Label(root, text="Ping: -- ms", anchor="w", fg="#888",
+        ping_row = tk.Frame(root)
+        ping_row.pack(fill="x", padx=12, pady=6)
+        self.ping_label = tk.Label(ping_row, text="Ping: -- ms", anchor="w", fg="#888",
                                    font=("Segoe UI", 11, "bold"))
-        self.ping_label.pack(fill="x", padx=12, pady=(0, 6))
+        self.ping_label.pack(side="left")
+        self.debug = app_common.DebugWindow(root, "Tilt Wheel - Receiver debug", self._debug_rows)
+        tk.Button(ping_row, text="Debug", command=self.debug.open).pack(side="right")
 
         tuning = tk.LabelFrame(root, text="Tuning (applies live)")
         tuning.pack(fill="x", **pad)
@@ -292,6 +294,28 @@ class ReceiverApp:
         return {"deadzone": self.deadzone.get(), "gamma": self.gamma.get(),
                 "smooth": self.smooth.get(), "invert": self.invert.get(),
                 "timeout": 0.25}
+
+    def _debug_rows(self):
+        """Rows for the Debug window: (name, value, what it means)."""
+        eng = self.engine
+        if eng is None:
+            return [("status", "stopped", "press Start to receive")]
+        st = eng.status
+        frames, dropped = st["frames"], st["dropped"]
+        total = frames + dropped
+        loss = f"{100 * dropped / total:.1f}%" if total else "--"
+        rtt = eng.ping.summary()
+        return [
+            ("linked", "yes" if st["linked"] else "no", "receiving packets right now"),
+            ("from", st["sender"] or "--", "the Mac's address"),
+            ("steer", f"{st['steer']:+.3f}", "after deadzone / gamma, sent to the pad"),
+            ("held", " ".join(st["held"]) or "-", "pad buttons held right now"),
+            ("frames", f"{frames}", "updates applied from the Mac"),
+            ("dropped", f"{dropped}", "packets lost or skipped as stale"),
+            ("loss", loss, "dropped / total. Fine under ~10%"),
+            ("ping avg", f"{rtt[0]:.1f} ms" if rtt else "--", "round trip to the Mac"),
+            ("ping max", f"{rtt[1]:.1f} ms" if rtt else "--", "worst round trip, last second"),
+        ]
 
     def load_settings(self):
         try:
@@ -383,10 +407,6 @@ class ReceiverApp:
                 else:
                     self.status.config(
                         text="Waiting for the Mac... (controls centred)", fg="#b06000")
-                held = " ".join(st["held"]) or "-"
-                self.counters.config(text=(
-                    f"steer={st['steer']:+.3f}  frames={st['frames']}  "
-                    f"dropped={st['dropped']}  held={held}"))
                 text, color = app_common.ping_display(eng.ping)
                 self.ping_label.config(text=text, fg=color)
         elif vg is not None:

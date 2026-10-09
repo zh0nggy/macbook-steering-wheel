@@ -7,6 +7,7 @@ the frozen wire format is untouched.
 """
 
 import math
+import sys
 import socket
 import struct
 import threading
@@ -275,6 +276,53 @@ class Bar(tk.Canvas):
             self.coords(self.fill, min(mid, x), 0, max(mid, x), self.h)
         else:
             self.coords(self.fill, 0, 0, max(0.0, min(1.0, value)) * self.w, self.h)
+
+
+class DebugWindow:
+    """Small separate window with the raw counters, kept out of the main UI.
+
+    `read()` returns [(name, value, meaning)] and is polled while the window
+    is open. Opening it again just brings the existing one to the front.
+    """
+
+    def __init__(self, parent, title, read):
+        self.parent = parent
+        self.title = title
+        self.read = read
+        self.win = None
+        self.values = {}
+
+    def open(self):
+        if self.win is not None and self.win.winfo_exists():
+            self.win.lift()
+            return
+        self.win = tk.Toplevel(self.parent)
+        self.win.title(self.title)
+        self.win.resizable(False, False)
+        self.values = {}
+        for row, (name, value, meaning) in enumerate(self.read()):
+            tk.Label(self.win, text=name, anchor="w", font=("Helvetica", 10, "bold")).grid(
+                row=row, column=0, sticky="w", padx=(10, 6), pady=2)
+            label = tk.Label(self.win, text=value, anchor="e", width=10,
+                             font=("Menlo", 10) if sys.platform == "darwin" else ("Consolas", 10))
+            label.grid(row=row, column=1, sticky="e", padx=6)
+            tk.Label(self.win, text=meaning, anchor="w", fg="#666").grid(
+                row=row, column=2, sticky="w", padx=(6, 10))
+            self.values[name] = label
+        self._tick()
+
+    def _tick(self):
+        if self.win is None or not self.win.winfo_exists():
+            return
+        for name, value, _meaning in self.read():
+            if name in self.values:
+                self.values[name].config(text=value)
+        self.win.after(250, self._tick)
+
+    def close(self):
+        if self.win is not None and self.win.winfo_exists():
+            self.win.destroy()
+        self.win = None
 
 
 def labeled_scale(parent, row, text, var, low, high, step):

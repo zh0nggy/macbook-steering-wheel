@@ -131,7 +131,8 @@ Racing games often add their own controller smoothing or "steering assist". Turn
 | Game doesn't react | Start the receiver before the game, then restart the game. Check the game's controller bindings match the mapping. |
 | Steering goes the wrong way | Tick **Invert**. |
 | Steering drifts off centre | Click **Calibrate centre** again. |
-| `rejected` count climbs fast | You're sliding the laptop instead of tilting it in place. |
+| `rejected` climbs fast (Mac **Debug** window) | You're sliding the laptop instead of tilting it in place. |
+| `loss` over ~10% (PC **Debug** window) | WiFi is losing packets. Try a less busy network or a phone hotspot. |
 | Worked yesterday, not today | The PC's IP probably changed. Check the receiver window. |
 
 ## Files
