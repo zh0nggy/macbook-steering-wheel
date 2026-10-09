@@ -407,7 +407,7 @@ class SenderApp:
         # --- live view ---
         live = tk.Frame(root)
         live.pack(fill="x", **pad)
-        self.status = tk.Label(live, text="Starting sensor...", anchor="w", fg="#666")
+        self.status = tk.Label(live, text="Starting sensor...", anchor="w", fg=app_common.muted(self.root))
         self.status.grid(row=0, column=0, columnspan=2, sticky="we")
         self.bars = {}
         for row, (key, label, color, centered) in enumerate([
@@ -421,7 +421,7 @@ class SenderApp:
             self.bars[key] = bar
         ping_row = tk.Frame(live)
         ping_row.grid(row=4, column=0, columnspan=2, sticky="we", pady=(4, 0))
-        self.ping_label = tk.Label(ping_row, text="Ping: -- ms", anchor="w", fg="#888",
+        self.ping_label = tk.Label(ping_row, text="Ping: -- ms", anchor="w", fg=app_common.muted(self.root),
                                    font=("Helvetica", 14, "bold"))
         self.ping_label.pack(side="left")
         self.debug = app_common.DebugWindow(root, "Tilt Wheel - Sender debug", self._debug_rows)
@@ -611,12 +611,12 @@ class SenderApp:
                 for key, bar in self.bars.items():
                     bar.set(st[key])
                 if eng.target is None:
-                    self.status.config(text=f"Sensor: {st['mode']}  -  not sending", fg="#666")
+                    self.status.config(text=f"Sensor: {st['mode']}  -  not sending", fg=app_common.muted(self.root))
                 else:
                     self.status.config(fg="#1d7a35", text=(
                         f"Sending to {eng.target[0]}  -  {st['mode']}"))
                 if eng.target is None:
-                    self.ping_label.config(text="Ping: -- ms", fg="#888")
+                    self.ping_label.config(text="Ping: -- ms", fg=app_common.muted(self.root))
                 else:
                     text, color = app_common.ping_display(eng.rtt)
                     self.ping_label.config(text=text, fg=color)

@@ -245,7 +245,7 @@ class ReceiverApp:
         self.fake_btn = tk.Button(controls, text="Test: fake sweep", command=self.toggle_fake)
         self.fake_btn.pack(side="right")
 
-        self.status = tk.Label(root, text="Stopped", anchor="w", fg="#666")
+        self.status = tk.Label(root, text="Stopped", anchor="w", fg=app_common.muted(self.root))
         self.status.pack(fill="x", **pad)
 
         meters = tk.Frame(root)
@@ -262,7 +262,7 @@ class ReceiverApp:
             self.bars[key] = bar
         ping_row = tk.Frame(root)
         ping_row.pack(fill="x", padx=12, pady=6)
-        self.ping_label = tk.Label(ping_row, text="Ping: -- ms", anchor="w", fg="#888",
+        self.ping_label = tk.Label(ping_row, text="Ping: -- ms", anchor="w", fg=app_common.muted(self.root),
                                    font=("Segoe UI", 11, "bold"))
         self.ping_label.pack(side="left")
         self.debug = app_common.DebugWindow(root, "Tilt Wheel - Receiver debug", self._debug_rows)
@@ -276,7 +276,7 @@ class ReceiverApp:
         tk.Checkbutton(tuning, text="Invert steering", variable=self.invert).grid(
             row=3, column=0, columnspan=2, sticky="w")
 
-        tk.Label(root, anchor="w", justify="left", fg="#666", wraplength=380, text=(
+        tk.Label(root, anchor="w", justify="left", fg=app_common.muted(root), wraplength=380, text=(
             "Works with any game that supports an Xbox controller. Start this "
             "before launching the game (most only look for controllers at "
             "startup). Choose which Mac key presses which button in the Mac "
@@ -366,7 +366,7 @@ class ReceiverApp:
         self.engine.stop()
         self.engine = None
         self.start_btn.config(text="Start")
-        self.ping_label.config(text="Ping: -- ms", fg="#888")
+        self.ping_label.config(text="Ping: -- ms", fg=app_common.muted(self.root))
         for bar in self.bars.values():
             bar.set(0.0)
 
@@ -410,7 +410,7 @@ class ReceiverApp:
                 text, color = app_common.ping_display(eng.ping)
                 self.ping_label.config(text=text, fg=color)
         elif vg is not None:
-            self.status.config(text="Stopped", fg="#666")
+            self.status.config(text="Stopped", fg=app_common.muted(self.root))
         self._timer = self.root.after(50, self.refresh)
 
     def close(self):

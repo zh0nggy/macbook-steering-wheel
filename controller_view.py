@@ -10,6 +10,8 @@ Bindings are {target: tk keysym}. Targets are the protocol.BUTTONS names plus
 
 import tkinter as tk
 
+from app_common import is_dark
+
 # Display names for keysyms (Tk names -> what's printed on the key).
 # Short enough to fit inside the small round buttons.
 KEY_LABELS = {
@@ -65,12 +67,21 @@ def normalise(keysym):
     return keysym.lower() if len(keysym) == 1 else keysym
 
 
-OUTLINE = "#555"
-FILL = "#ffffff"
-BOUND = "#dbe9fb"
-HELD = "#2b7de9"
-PICKING = "#ffd75e"
+# Two palettes; ControllerView picks one from the window's real background so
+# the drawing blends in with light and dark mode (macOS dark mode included).
+LIGHT = {
+    "outline": "#555", "body": "#e9e9e9", "ring": "#d6d6d6", "button": "#ffffff",
+    "bound": "#dbe9fb", "held": "#2b7de9", "picking": "#ffd75e",
+    "key_text": "#222", "label": "#777", "hint": "#555", "hint_active": "#b06000",
+}
+DARK = {
+    "outline": "#9a9a9a", "body": "#46464a", "ring": "#2c2c2e", "button": "#636368",
+    "bound": "#2f4f78", "held": "#2b7de9", "picking": "#c79a1e",
+    "key_text": "#f2f2f2", "label": "#9a9a9a", "hint": "#a8a8a8", "hint_active": "#f0a63a",
+}
 FACE_COLORS = {"A": "#2fa84f", "B": "#d64545", "X": "#2b7de9", "Y": "#d9a400"}
+
+
 
 
 class ControllerView(tk.Frame):
@@ -94,10 +105,13 @@ class ControllerView(tk.Frame):
         self.shapes = {}   # target -> canvas item to recolour
         self.labels = {}   # target -> canvas text item for the key name
 
-        self.canvas = tk.Canvas(self, width=self.W, height=self.H, bg="#f4f4f4",
+        # Same background as the window, so the drawing sits on it rather than
+        # in a pale box; then colours to suit a light or dark window.
+        self.colors = DARK if is_dark(self) else LIGHT
+        self.canvas = tk.Canvas(self, width=self.W, height=self.H, bg=self.cget("bg"),
                                 highlightthickness=0)
         self.canvas.pack()
-        self.hint = tk.Label(self, anchor="w", justify="left", fg="#555")
+        self.hint = tk.Label(self, anchor="w", justify="left", fg=self.colors["hint"])
         self.hint.pack(fill="x", pady=(2, 0))
         # Reset goes in a strip above the drawing, top-right corner.
         self.reset_btn = tk.Button(self.canvas, text="Reset to defaults",
@@ -147,7 +161,7 @@ class ControllerView(tk.Frame):
         mid = self.W / 2
         self.offset = 0  # _body_points adds this; __init__ sets it after the shift
         self.body = c.create_polygon(self._body_points(0), smooth=True, splinesteps=24,
-                                     fill="#e9e9e9", outline=OUTLINE, width=2)
+                                     fill=self.colors["body"], outline=self.colors["outline"], width=2)
 
         # Triggers (back) and bumpers (top edge), labelled since they look alike.
         self._button("LT", c.create_rectangle(64, 10, 148, 36), (106, 23))
@@ -155,13 +169,13 @@ class ControllerView(tk.Frame):
         self._button("LB", c.create_rectangle(80, 50, 170, 74), (125, 62))
         self._button("RB", c.create_rectangle(270, 50, 360, 74), (315, 62))
         for text, x, y in (("LT", 56, 23), ("RT", 384, 23), ("LB", 72, 62), ("RB", 368, 62)):
-            c.create_text(x, y, text=text, fill="#777", font=("Helvetica", 8, "bold"),
+            c.create_text(x, y, text=text, fill=self.colors["label"], font=("Helvetica", 8, "bold"),
                           anchor="e" if x < mid else "w")
 
         # Sticks: outer ring is the (unbindable) stick, inner disc is the click.
         for target, (x, y) in (("LS", (118, 140)), ("RS", (268, 190))):
-            c.create_oval(x - 30, y - 30, x + 30, y + 30, fill="#d6d6d6",
-                          outline=OUTLINE, width=2)
+            c.create_oval(x - 30, y - 30, x + 30, y + 30, fill=self.colors["ring"],
+                          outline=self.colors["outline"], width=2)
             self._button(target, c.create_oval(x - 19, y - 19, x + 19, y + 19), (x, y))
 
         # D-pad: four arms around a centre square.
@@ -174,7 +188,7 @@ class ControllerView(tk.Frame):
                      (cx - a + 10, cy))
         self._button("DPAD_RIGHT", c.create_rectangle(cx + w, cy - w, cx + a, cy + w),
                      (cx + a - 10, cy))
-        c.create_rectangle(cx - w, cy - w, cx + w, cy + w, fill="#d6d6d6", outline=OUTLINE)
+        c.create_rectangle(cx - w, cy - w, cx + w, cy + w, fill=self.colors["ring"], outline=self.colors["outline"])
 
         # Face buttons in the usual diamond, with coloured letters beside them.
         fx, fy, d, r = 334, 140, 27, 16
@@ -219,7 +233,7 @@ class ControllerView(tk.Frame):
 
     def _button(self, target, item, text_at):
         c = self.canvas
-        c.itemconfig(item, outline=OUTLINE, width=2, fill=FILL)
+        c.itemconfig(item, outline=self.colors["outline"], width=2, fill=self.colors["button"])
         text = c.create_text(*text_at, text="", font=("Helvetica", 8))
         self.shapes[target] = item
         self.labels[target] = text
@@ -231,21 +245,28 @@ class ControllerView(tk.Frame):
     # ---------- state ----------
 
     def _refresh(self, target):
+        col = self.colors
         if target == self.picking:
-            fill = PICKING
+            state = "picking"
         elif target in self.held_targets:
-            fill = HELD
+            state = "held"
         elif target in self.bindings:
-            fill = BOUND
+            state = "bound"
         else:
-            fill = FILL
-        self.canvas.itemconfig(self.shapes[target], fill=fill)
+            state = "button"
+        self.canvas.itemconfig(self.shapes[target], fill=col[state])
         key = self.bindings.get(target)
         # Triggers and bumpers are wide, so they get the full key name.
         wide = target in ("LT", "RT", "LB", "RB")
         text = "?" if target == self.picking else (
             WIDE_LABELS.get(key, key_label(key)) if wide else key_label(key))
-        color = "white" if fill == HELD else "#222"
+        # Dark text on the light yellow "press a key" fill, else palette text.
+        if state == "held":
+            color = "white"
+        elif state == "picking":
+            color = "#222"
+        else:
+            color = col["key_text"]
         self.canvas.itemconfig(self.labels[target], text=text, fill=color)
 
     def _refresh_all(self):
@@ -259,7 +280,7 @@ class ControllerView(tk.Frame):
         else:
             text = "Click a button on the controller, then press a Mac key for it."
         self.hint.config(text=text + (f"  {extra}" if extra else ""),
-                         fg="#b06000" if self.picking else "#555")
+                         fg=self.colors["hint_active" if self.picking else "hint"])
 
     def start_pick(self, target):
         previous, self.picking = self.picking, target

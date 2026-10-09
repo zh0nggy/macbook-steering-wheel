@@ -254,20 +254,33 @@ class BeaconListener:
             self._sock.close()
 
 
+def is_dark(widget):
+    """True if the widget's background is dark (e.g. macOS dark mode)."""
+    r, g, b = (v / 257 for v in widget.winfo_rgb(widget.cget("bg")))
+    return (0.299 * r + 0.587 * g + 0.114 * b) < 128
+
+
+def muted(widget):
+    """Grey for secondary text that stays readable on light and dark windows."""
+    return "#9a9a9a" if is_dark(widget) else "#666"
+
+
 class Bar(tk.Canvas):
     """Horizontal meter. centered=True draws -1..+1 from the middle (steering),
     otherwise 0..1 from the left (pedals)."""
 
     def __init__(self, parent, color="#2b7de9", centered=False, width=320, height=22):
+        dark = is_dark(parent)
         super().__init__(
-            parent, width=width, height=height, bg="#e6e6e6",
-            highlightthickness=1, highlightbackground="#b0b0b0",
+            parent, width=width, height=height, bg="#2c2c2e" if dark else "#e6e6e6",
+            highlightthickness=1, highlightbackground="#5a5a5e" if dark else "#b0b0b0",
         )
         self.w, self.h = width, height
         self.centered = centered
         self.fill = self.create_rectangle(0, 0, 0, height, fill=color, width=0)
         if centered:
-            self.create_line(width / 2, 0, width / 2, height, fill="#555")
+            self.create_line(width / 2, 0, width / 2, height,
+                             fill="#9a9a9a" if dark else "#555")
 
     def set(self, value):
         if self.centered:
@@ -306,7 +319,7 @@ class DebugWindow:
             label = tk.Label(self.win, text=value, anchor="e", width=10,
                              font=("Menlo", 10) if sys.platform == "darwin" else ("Consolas", 10))
             label.grid(row=row, column=1, sticky="e", padx=6)
-            tk.Label(self.win, text=meaning, anchor="w", fg="#666").grid(
+            tk.Label(self.win, text=meaning, anchor="w", fg=muted(self.win)).grid(
                 row=row, column=2, sticky="w", padx=(6, 10))
             self.values[name] = label
         self._tick()
