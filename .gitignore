@@ -1,3 +1,4 @@
 __pycache__/
 *.pyc
 receiver_settings.json
+sender_settings.json

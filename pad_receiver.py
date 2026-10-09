@@ -15,6 +15,7 @@ import argparse
 import socket
 import time
 
+import pad_mapping
 import protocol
 
 try:
@@ -118,12 +119,6 @@ def main():
     parser.add_argument("--invert", action="store_true", help="flip steering direction")
     parser.add_argument("--timeout", type=float, default=0.25, help="failsafe seconds")
     parser.add_argument(
-        "--shift-hold",
-        type=float,
-        default=0.07,
-        help="seconds to hold a gear button. Raise if shifts get missed.",
-    )
-    parser.add_argument(
         "--dry-run", action="store_true", help="print values, do not touch the pad"
     )
     args = parser.parse_args()
@@ -141,15 +136,14 @@ def main():
     sock.bind(("0.0.0.0", args.port))
     sock.setblocking(False)
 
-    # A and X to match the AC bindings: Gearshift Up = A, Gearshift Down = X.
-    # In dry-run mode vg is None, so there is no button enum to reference.
-    up_button = None if vg is None else vg.XUSB_BUTTON.XUSB_GAMEPAD_A
-    down_button = None if vg is None else vg.XUSB_BUTTON.XUSB_GAMEPAD_X
-    shift_up = ButtonPulse(pad, up_button, args.shift_hold)
-    shift_down = ButtonPulse(pad, down_button, args.shift_hold)
+    # Pad buttons are held exactly as long as the Mac reports them held (v3
+    # wire format). In dry-run mode vg is None, so there is no button enum.
+    buttons = pad_mapping.ButtonState(
+        lambda name: None if vg is None else getattr(vg.XUSB_BUTTON, pad_mapping.XUSB[name]))
 
     failsafe = Failsafe(args.timeout)
     steer = throttle = brake = 0.0
+    mask = 0
     received = dropped = 0
     shifts = 0
     last_seq = -1
@@ -185,26 +179,18 @@ def main():
                     steer += (target - steer) * (1.0 - args.smooth)
                 else:
                     steer = target
-                throttle = newest["throttle"]
-                brake = newest["brake"]
-
-                before = (shift_up.release_at, shift_down.release_at)
-                shift_up.check(newest["gear_up"])
-                shift_down.check(newest["gear_down"])
-                if before != (shift_up.release_at, shift_down.release_at):
-                    shifts += 1
-
-            # Released on a timer, so shifting never blocks the steering loop.
-            shift_up.maybe_release()
-            shift_down.maybe_release()
+                throttle = newest["right_trigger"]
+                brake = newest["left_trigger"]
+                mask = newest["buttons"]
 
             if failsafe.is_stale():
                 steer = throttle = brake = 0.0
+                mask = 0  # release everything if the link drops
+            buttons.update(pad, mask)
+            shifts = buttons.presses
 
             if pad is not None:
-                pad.left_joystick_float(x_value_float=steer, y_value_float=0.0)
-                pad.right_trigger_float(value_float=throttle)
-                pad.left_trigger_float(value_float=brake)
+                pad_mapping.apply(pad, steer, throttle, brake)
                 pad.update()
 
             now = time.monotonic()

@@ -4,10 +4,10 @@ Same job as pad_receiver.py, in a window: receives UDP control frames and
 drives a virtual Xbox pad via ViGEmBus. It also broadcasts a discovery beacon
 so the Mac app finds this PC without anyone typing an IP address.
 
-Works with any game that accepts an Xbox controller. Pick a preset (or
-Custom) under "Game mapping" to choose which stick/trigger steering and pedals
-drive and which pad buttons the Mac's two shift keys press. Settings are saved
-to receiver_settings.json next to this file.
+Works with any game that accepts an Xbox controller. Which Mac key presses
+which pad button is set on the Mac (the controller picture in the sender app);
+this side just mirrors it. Tuning is saved to receiver_settings.json next to
+this file.
 
 Needs ViGEmBus + `pip install vgamepad` for the real pad. Without them, tick
 "Dry run" to test the network path only.
@@ -40,10 +40,8 @@ SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 
 def resolve_button(name):
-    """Mapping display name -> vgamepad button value (or a placeholder in dry run)."""
-    attr = pad_mapping.BUTTONS.get(name)
-    if attr is None:
-        return None
+    """protocol button name -> vgamepad button value (or a placeholder in dry run)."""
+    attr = pad_mapping.XUSB[name]
     return attr if vg is None else getattr(vg.XUSB_BUTTON, attr)
 
 
@@ -60,10 +58,9 @@ class ReceiverEngine:
         self.dry_run = dry_run
         self.settings = settings  # dict, replaced wholesale by the GUI
         self.status = {"steer": 0.0, "throttle": 0.0, "brake": 0.0,
-                       "frames": 0, "dropped": 0, "shifts": 0,
+                       "frames": 0, "dropped": 0, "presses": 0, "held": (),
                        "linked": False, "sender": None}
         self.error = None
-        self.test_presses = []  # GUI appends "button_1"/"button_2" to press once
         self.ping = app_common.RollingStats(1.0)  # round-trip ms to the Mac
         self._sender_addr = None
         self._stop = threading.Event()
@@ -100,28 +97,20 @@ class ReceiverEngine:
                 beacon.close()
 
     def _loop(self, pad, sock, beacon):
-        hold = self.settings["shift_hold"]
-        # Counter fields in the packet -> the mapping role that decides the button.
-        pulses = {"gear_up": ("button_1", pad_mapping.Pulse(hold)),
-                  "gear_down": ("button_2", pad_mapping.Pulse(hold))}
+        buttons = pad_mapping.ButtonState(resolve_button)
         failsafe = Failsafe(self.settings["timeout"])
 
         steer = throttle = brake = 0.0
-        received = dropped = shifts = 0
+        mask = 0
+        received = dropped = 0
         last_seq = -1
         next_ping = 0.0
         st = self.status
 
         while not self._stop.is_set():
             cfg = self.settings
-            mapping = cfg["mapping"]
             now = time.monotonic()
             beacon.tick()
-
-            while self.test_presses:
-                role = self.test_presses.pop(0)
-                field = "gear_up" if role == "button_1" else "gear_down"
-                pulses[field][1].fire(pad, resolve_button(mapping[role]), now)
 
             # Keep only the newest frame, exactly as pad_receiver.py does.
             newest = sender = None
@@ -173,28 +162,25 @@ class ReceiverEngine:
                     steer += (target - steer) * (1.0 - cfg["smooth"])
                 else:
                     steer = target
-                throttle = newest["throttle"]
-                brake = newest["brake"]
-
-                for field, (role, pulse) in pulses.items():
-                    if pulse.check(newest[field], pad, resolve_button(mapping[role]), now):
-                        shifts += 1
+                throttle = newest["right_trigger"]
+                brake = newest["left_trigger"]
+                mask = newest["buttons"]
                 st["sender"] = sender
-
-            # Released on a timer, so pressing never blocks the steering loop.
-            for _role, pulse in pulses.values():
-                pulse.maybe_release(pad, now)
 
             stale = failsafe.is_stale()
             if stale:
+                # Release everything, so a lost link can't leave a button held.
                 steer = throttle = brake = 0.0
+                mask = 0
+            buttons.update(pad, mask)
 
             if pad is not None:
-                pad_mapping.apply(pad, mapping, steer, throttle, brake)
+                pad_mapping.apply(pad, steer, throttle, brake)
                 pad.update()
 
             st.update(steer=steer, throttle=throttle, brake=brake, frames=received,
-                      dropped=dropped, shifts=shifts, linked=not stale)
+                      dropped=dropped, presses=buttons.presses,
+                      held=tuple(sorted(buttons.held)), linked=not stale)
             time.sleep(0.001)  # ~1.5 ms in practice; frames wait at most that long
 
 
@@ -239,10 +225,6 @@ class ReceiverApp:
         self.invert = tk.BooleanVar(value=False)
         self.dry_run = tk.BooleanVar(value=vg is None)
         self.port = tk.IntVar(value=protocol.DEFAULT_PORT)
-        self.preset = tk.StringVar(value=pad_mapping.DEFAULT_PRESET)
-        self.map_vars = {role: tk.StringVar(value=value) for role, value
-                         in pad_mapping.PRESETS[pad_mapping.DEFAULT_PRESET].items()}
-        self._applying_preset = False
         self.load_settings()
 
         pad = {"padx": 12, "pady": 6}
@@ -271,11 +253,11 @@ class ReceiverApp:
         self.bars = {}
         for row, (key, label, color, centered) in enumerate([
             ("steer", "Steering", "#2b7de9", True),
-            ("throttle", "Throttle", "#2fa84f", False),
-            ("brake", "Brake", "#d64545", False),
+            ("throttle", "Right trigger", "#2fa84f", False),
+            ("brake", "Left trigger", "#d64545", False),
         ]):
-            tk.Label(meters, text=label, width=9, anchor="w").grid(row=row, column=0, sticky="w")
-            bar = app_common.Bar(meters, color=color, centered=centered)
+            tk.Label(meters, text=label, width=12, anchor="w").grid(row=row, column=0, sticky="w")
+            bar = app_common.Bar(meters, color=color, centered=centered, width=300)
             bar.grid(row=row, column=1, pady=2)
             self.bars[key] = bar
         self.counters = tk.Label(root, text="", anchor="w", font=("Consolas", 9))
@@ -292,36 +274,11 @@ class ReceiverApp:
         tk.Checkbutton(tuning, text="Invert steering", variable=self.invert).grid(
             row=3, column=0, columnspan=2, sticky="w")
 
-        mapping = tk.LabelFrame(root, text="Game mapping (Xbox 360 pad)")
-        mapping.pack(fill="x", **pad)
-        tk.Label(mapping, text="Preset", anchor="w").grid(row=0, column=0, sticky="w")
-        tk.OptionMenu(mapping, self.preset, *pad_mapping.PRESETS, pad_mapping.CUSTOM,
-                      command=self.apply_preset).grid(row=0, column=1, columnspan=2,
-                                                      sticky="we")
-        rows = [
-            ("steer", "Steering", pad_mapping.STEER_TARGETS),
-            ("throttle", "Throttle", pad_mapping.PEDAL_TARGETS),
-            ("brake", "Brake", pad_mapping.PEDAL_TARGETS),
-            ("button_1", "Button 1\n(Mac gear up)", pad_mapping.BUTTONS),
-            ("button_2", "Button 2\n(Mac gear down)", pad_mapping.BUTTONS),
-        ]
-        for row, (role, label, choices) in enumerate(rows, start=1):
-            tk.Label(mapping, text=label, anchor="w", justify="left").grid(
-                row=row, column=0, sticky="w")
-            tk.OptionMenu(mapping, self.map_vars[role], *choices).grid(
-                row=row, column=1, sticky="we")
-            if role.startswith("button"):
-                tk.Button(mapping, text="Test", command=lambda r=role: self.test_press(r)
-                          ).grid(row=row, column=2, padx=(6, 0))
-            self.map_vars[role].trace_add("write", self.mapping_changed)
-        mapping.columnconfigure(1, weight=1)
-
         tk.Label(root, anchor="w", justify="left", fg="#666", wraplength=380, text=(
             "Works with any game that supports an Xbox controller. Start this "
             "before launching the game (most only look for controllers at "
-            "startup), then bind controls in the game to match the mapping. "
-            "'Test' presses a button once, handy for in-game rebinding. "
-            "Check the pad in Win+R > joy.cpl."
+            "startup). Choose which Mac key presses which button in the Mac "
+            "app's controller picture. Check the pad in Win+R > joy.cpl."
         )).pack(fill="x", **pad)
 
         if vg is None:
@@ -331,31 +288,10 @@ class ReceiverApp:
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.refresh()
 
-    def mapping(self):
-        return {role: var.get() for role, var in self.map_vars.items()}
-
     def settings(self):
         return {"deadzone": self.deadzone.get(), "gamma": self.gamma.get(),
                 "smooth": self.smooth.get(), "invert": self.invert.get(),
-                "timeout": 0.25, "shift_hold": 0.07, "mapping": self.mapping()}
-
-    def apply_preset(self, name):
-        if name not in pad_mapping.PRESETS:
-            return  # "Custom": keep whatever is selected now
-        self._applying_preset = True
-        for role, value in pad_mapping.PRESETS[name].items():
-            self.map_vars[role].set(value)
-        self._applying_preset = False
-
-    def mapping_changed(self, *_):
-        if not self._applying_preset:
-            self.preset.set(pad_mapping.preset_for(self.mapping()))
-
-    def test_press(self, role):
-        if self.engine is None:
-            messagebox.showinfo("Tilt Wheel", "Press Start first so the virtual pad exists.")
-            return
-        self.engine.test_presses.append(role)
+                "timeout": 0.25}
 
     def load_settings(self):
         try:
@@ -371,16 +307,12 @@ class ReceiverApp:
                     var.set(data[key])
                 except tk.TclError:
                     pass
-        mapping = pad_mapping.sanitize(data.get("mapping", {}))
-        for role, value in mapping.items():
-            self.map_vars[role].set(value)
-        self.preset.set(pad_mapping.preset_for(mapping))
 
     def save_settings(self):
         try:
             data = {"deadzone": self.deadzone.get(), "gamma": self.gamma.get(),
                     "smooth": self.smooth.get(), "invert": self.invert.get(),
-                    "port": int(self.port.get()), "mapping": self.mapping()}
+                    "port": int(self.port.get())}
             with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
         except (OSError, ValueError, tk.TclError):
@@ -451,9 +383,10 @@ class ReceiverApp:
                 else:
                     self.status.config(
                         text="Waiting for the Mac... (controls centred)", fg="#b06000")
+                held = " ".join(st["held"]) or "-"
                 self.counters.config(text=(
                     f"steer={st['steer']:+.3f}  frames={st['frames']}  "
-                    f"dropped={st['dropped']}  shifts={st['shifts']}"))
+                    f"dropped={st['dropped']}  held={held}"))
                 text, color = app_common.ping_display(eng.ping)
                 self.ping_label.config(text=text, fg=color)
         elif vg is not None:

@@ -24,7 +24,9 @@ front while you drive. That avoids the Input Monitoring permission and stops
 your pedal presses typing into some other app.
 """
 
+import json
 import math
+import os
 import socket
 import sys
 import threading
@@ -33,6 +35,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 import app_common
+import controller_view
 import protocol
 from key_input import Ramp
 
@@ -68,32 +71,46 @@ FALLBACK_LATERAL = 0
 FALLBACK_VERTICAL = 2
 
 
-# Key choices offered in the window -> Tk keysym. Tk names keys differently
-# from pynput, and caps lock is left out for the same reason as key_input.py:
-# macOS latches it instead of reporting hold.
-KEY_CHOICES = {
-    "Left Shift": "Shift_L", "Right Shift": "Shift_R", "Return": "Return",
-    "Tab": "Tab", "Space": "space", "Up": "Up", "Down": "Down", "Left": "Left",
-    "Right": "Right", "Z": "z", "X": "x", "A": "a", "S": "s", "Q": "q", "W": "w",
-}
+SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "sender_settings.json")
 
 
 class WindowKeys:
-    """Tracks held keys from Tk events. Same state() contract as key_input.Keys."""
+    """Tracks held keys from Tk events and turns them into pad state.
+
+    `bindings` is {target: keysym} from the controller picture. Targets are
+    protocol.BUTTONS names plus "RT"/"LT" for the analog triggers. Keys are
+    sent as HELD state; the receiver presses the pad button while held.
+    """
 
     def __init__(self, root):
         self.held = set()
-        self.gear_up_count = 0
-        self.gear_down_count = 0
         self.bindings = {}
+        self.intercept = None  # callable(keysym) -> True if it ate the key
         self._lock = threading.Lock()
-        root.bind_all("<KeyPress>", self._press)
-        root.bind_all("<KeyRelease>", self._release)
+        # Our own bind tag, put FIRST on every widget, so keys reach us before
+        # Tk's built-ins. With plain bind_all, Tk's Tab focus-traversal binding
+        # (also on "all") swallowed Tab before we saw it -- and Tab is a
+        # default gear key. Returning "break" then stops the built-ins.
+        self.root = root
+        root.bind_class(self.TAG, "<KeyPress>", self._press)
+        root.bind_class(self.TAG, "<KeyRelease>", self._release)
+        self.install(root)
         # Losing focus means we stop hearing releases, so drop everything
         # rather than leave the throttle stuck on. FocusOut also fires when
         # focus just moves between widgets, so check the window really lost it.
-        self.root = root
         root.bind("<FocusOut>", lambda _e: root.after(20, self._check_focus))
+
+    TAG = "TiltWheelKeys"
+
+    def install(self, widget):
+        """Put our tag first on `widget` and all its children. Call again after
+        building the window, since widgets made later don't inherit it."""
+        tags = widget.bindtags()
+        if self.TAG not in tags:
+            widget.bindtags((self.TAG,) + tags)
+        for child in widget.winfo_children():
+            self.install(child)
 
     def _check_focus(self):
         if self.root.focus_get() is None:
@@ -111,14 +128,12 @@ class WindowKeys:
     def _press(self, event):
         if self._typing(event):
             return None  # let the IP box receive normal typing
-        name = self._name(event)
+        # While the controller picture is waiting for a key, the key binds
+        # instead of driving the game.
+        if self.intercept is not None and self.intercept(event.keysym):
+            return "break"
         with self._lock:
-            if name not in self.held:  # ignore auto-repeat: one press = one shift
-                self.held.add(name)
-                if name == self.bindings.get("gear_up"):
-                    self.gear_up_count = (self.gear_up_count + 1) & 0xFF
-                elif name == self.bindings.get("gear_down"):
-                    self.gear_down_count = (self.gear_down_count + 1) & 0xFF
+            self.held.add(self._name(event))  # a set, so auto-repeat is harmless
         return "break"  # stop Tab moving focus, Space pressing buttons, etc.
 
     def _release(self, event):
@@ -132,11 +147,19 @@ class WindowKeys:
         with self._lock:
             self.held.clear()
 
-    def state(self):
+    def held_targets(self):
+        """Set of bound targets whose key is held right now."""
         with self._lock:
-            return (self.bindings.get("throttle") in self.held,
-                    self.bindings.get("brake") in self.held,
-                    self.gear_up_count, self.gear_down_count)
+            held = set(self.held)
+        return {t for t, key in self.bindings.items() if key in held}
+
+    def state(self):
+        """(right_trigger_held, left_trigger_held, button_bitmask)."""
+        targets = self.held_targets()
+        mask = 0
+        for name in targets:
+            mask |= protocol.BUTTON_BIT.get(name, 0)
+        return "RT" in targets, "LT" in targets, mask
 
 
 class SenderEngine:
@@ -211,7 +234,7 @@ class SenderEngine:
         throttle_ramp = Ramp(0.35, 0.18)
         brake_ramp = Ramp(0.35, 0.18)
         seq = rejected = nodata = 0
-        gear_up = gear_down = 0
+        buttons = 0
         steer = offset = 0.0
         last_raw = None        # newest raw sample, to spot when a new one arrives
         unwrapped = None       # raw roll made continuous, so the filter never sees a jump
@@ -254,31 +277,34 @@ class SenderEngine:
 
             dt = loop_start - prev_loop
             prev_loop = loop_start
-            if cfg["use_keys"]:
-                held_t, held_b, gear_up, gear_down = self.keys.state()
-                throttle = throttle_ramp.update(held_t, dt)
-                brake = brake_ramp.update(held_b, dt)
-            else:
-                throttle, brake = cfg["throttle"], 0.0
+            held_rt, held_lt, buttons = self.keys.state()
+            throttle = throttle_ramp.update(held_rt, dt)
+            brake = brake_ramp.update(held_lt, dt)
+            if cfg["throttle"] > 0.0:
+                # Fixed throttle (cruise): never less than the slider value.
+                throttle = max(throttle, cfg["throttle"])
 
             self._read_echoes(loop_start)
 
             target = self.target
             if target is None and last_target is not None:
-                # Just pressed Stop: centre the car on the way out, keeping the
-                # gear counters so the receiver doesn't fire a phantom shift.
+                # Just pressed Stop: centre the car and release every button
+                # on the way out.
                 for _ in range(10):
-                    self._send(last_target, 0.0, 0.0, 0.0, seq, gear_up, gear_down)
+                    self._send(last_target, 0.0, 0.0, 0.0, seq, 0)
                     seq += 1
                     time.sleep(0.01)
             # Send as soon as anything changes (capped at MAX_RATE), and on a
             # keepalive timer so the receiver failsafe stays happy while you
-            # hold still or the sensor stalls.
-            frame = (round(steer, 4), round(throttle, 3), round(brake, 3), gear_up, gear_down)
+            # hold still or the sensor stalls. A button press always goes out
+            # straight away rather than waiting for the rate cap.
+            frame = (round(steer, 4), round(throttle, 3), round(brake, 3), buttons)
             since = loop_start - last_send
-            if target is not None and ((frame != last_frame and since >= 1.0 / MAX_RATE)
+            buttons_changed = last_frame is None or buttons != last_frame[3]
+            if target is not None and (buttons_changed
+                                       or (frame != last_frame and since >= 1.0 / MAX_RATE)
                                        or since >= KEEPALIVE):
-                self._send(target, steer, throttle, brake, seq, gear_up, gear_down)
+                self._send(target, steer, throttle, brake, seq, buttons)
                 self.send_rate.add(1, loop_start)
                 seq += 1
                 last_send = loop_start
@@ -294,7 +320,7 @@ class SenderEngine:
 
         if last_target is not None:
             for _ in range(10):
-                self._send(last_target, 0.0, 0.0, 0.0, seq, gear_up, gear_down)
+                self._send(last_target, 0.0, 0.0, 0.0, seq, 0)
                 seq += 1
                 time.sleep(0.01)
 
@@ -316,10 +342,10 @@ class SenderEngine:
             if sent_at is not None and 0.0 <= now - sent_at < 2.0:
                 self.rtt.add((now - sent_at) * 1000.0, now)
 
-    def _send(self, target, steer, throttle, brake, seq, gear_up, gear_down):
+    def _send(self, target, steer, throttle, brake, seq, buttons):
         try:
             self._sock.sendto(protocol.pack(steer, throttle, brake, seq=seq,
-                                            gear_up=gear_up, gear_down=gear_down), target)
+                                            buttons=buttons), target)
         except OSError:
             pass  # network blip; the receiver's failsafe covers the gap
 
@@ -341,16 +367,19 @@ class SenderApp:
         self.min_cutoff = tk.DoubleVar(value=1.0)
         self.beta = tk.DoubleVar(value=0.3)
         self.invert = tk.BooleanVar(value=False)
-        self.use_keys = tk.BooleanVar(value=True)
         self.throttle = tk.DoubleVar(value=0.0)
-        self.key_vars = {
-            "throttle": tk.StringVar(value="Left Shift"),
-            "brake": tk.StringVar(value="Return"),
-            "gear_up": tk.StringVar(value="Tab"),
-            "gear_down": tk.StringVar(value="Right Shift"),
-        }
+        bindings = self.load_bindings()
 
         pad = {"padx": 12, "pady": 5}
+
+        # Two columns: connection + steering on the left, controller on the
+        # right, so the window still fits a laptop screen.
+        left = tk.Frame(root)
+        left.pack(side="left", fill="y", anchor="n")
+        right = tk.Frame(root)
+        right.pack(side="left", fill="y", anchor="n")
+        outer = root
+        root = left  # everything below packs into the left column by default
 
         if DEMO:
             demo = tk.LabelFrame(root, text="DEMO MODE: no motion sensor, drag to tilt",
@@ -383,10 +412,10 @@ class SenderApp:
         self.bars = {}
         for row, (key, label, color, centered) in enumerate([
             ("steer", "Steering", "#2b7de9", True),
-            ("throttle", "Throttle", "#2fa84f", False),
-            ("brake", "Brake", "#d64545", False),
+            ("throttle", "Right trigger", "#2fa84f", False),
+            ("brake", "Left trigger", "#d64545", False),
         ], start=1):
-            tk.Label(live, text=label, width=9, anchor="w").grid(row=row, column=0, sticky="w")
+            tk.Label(live, text=label, width=12, anchor="w").grid(row=row, column=0, sticky="w")
             bar = app_common.Bar(live, color=color, centered=centered)
             bar.grid(row=row, column=1, pady=2)
             self.bars[key] = bar
@@ -410,20 +439,28 @@ class SenderApp:
         tk.Checkbutton(tuning, text="Invert", variable=self.invert).grid(
             row=3, column=0, sticky="w")
 
-        # --- pedals / keys ---
-        pedals = tk.LabelFrame(root, text="Pedals and buttons (gears by default)")
-        pedals.pack(fill="x", **pad)
-        tk.Checkbutton(pedals, text="Use keys (this window must be in front)",
-                       variable=self.use_keys).grid(row=0, column=0, columnspan=4, sticky="w")
-        names = list(KEY_CHOICES)
-        for i, (role, label) in enumerate([("throttle", "Throttle"), ("brake", "Brake"),
-                                           ("gear_up", "Button 1"), ("gear_down", "Button 2")]):
-            r, c = 1 + i // 2, (i % 2) * 2
-            tk.Label(pedals, text=label).grid(row=r, column=c, sticky="w")
-            tk.OptionMenu(pedals, self.key_vars[role], *names).grid(row=r, column=c + 1, sticky="w")
-        app_common.labeled_scale(pedals, 3, "Fixed throttle\n(keys off)", self.throttle, 0, 1, 0.05)
+        # --- controller: click a button, press a key ---
+        pedals = tk.LabelFrame(right, text="Controls (this window must be in front)")
+        # Stretch to the window's full height so both columns end on one line.
+        pedals.pack(fill="both", expand=True, **pad)
+        self.controller = controller_view.ControllerView(
+            pedals, bindings, on_change=self._bindings_changed)
+        self.controller.pack(padx=4, pady=(4, 0))
+        self.keys.bindings = dict(bindings)
+        self.keys.intercept = self.controller.handle_key
+        cruise = tk.Frame(pedals)
+        cruise.pack(fill="x", padx=4, pady=(controller_view.ControllerView.ROW_GAP, 4))
+        app_common.labeled_scale(cruise, 0, "Fixed throttle\n(0 = off)", self.throttle, 0, 1, 0.05)
 
+        root = outer
         root.protocol("WM_DELETE_WINDOW", self.close)
+        # The left column sets the window height. Whatever the Controls box
+        # has left over goes to the controller's grips, so the drawing fills it.
+        # Sizes are only real once the window is on screen, so run it then.
+        self._pedals = pedals
+        root.after_idle(self._fill_controls)
+        # Now every widget exists: route their keys through us first.
+        self.keys.install(root)
 
         if IMPORT_ERROR:
             self.status.config(fg="#c03030", text="Sensor library failed to load")
@@ -438,8 +475,46 @@ class SenderApp:
     def settings(self):
         return {"range": max(1.0, self.range.get()),
                 "min_cutoff": max(0.05, self.min_cutoff.get()), "beta": self.beta.get(),
-                "invert": self.invert.get(), "use_keys": self.use_keys.get(),
-                "throttle": self.throttle.get()}
+                "invert": self.invert.get(), "throttle": self.throttle.get()}
+
+    @staticmethod
+    def load_bindings():
+        """Key bindings from sender_settings.json, or the defaults."""
+        try:
+            with open(SETTINGS_FILE, encoding="utf-8") as fh:
+                saved = json.load(fh).get("bindings", {})
+        except (OSError, ValueError, AttributeError):
+            return dict(controller_view.DEFAULT_BINDINGS)
+        valid = set(controller_view.TARGET_NAMES)
+        bindings = {t: k for t, k in saved.items() if t in valid and isinstance(k, str)}
+        return bindings or dict(controller_view.DEFAULT_BINDINGS)
+
+    def _fill_controls(self):
+        """Stretch the controller so the Controls box has no empty band.
+
+        The box is as tall as the left column; its contents are shorter. The
+        difference goes to the drawing. Measured from the left column rather
+        than the box, because the box itself grows when the drawing does.
+        """
+        self.root.update_idletasks()
+        box = self._pedals
+        left = box.master.master.winfo_children()[0]   # the left column frame
+        target = left.winfo_reqheight()
+        spare = target - box.master.winfo_reqheight()
+        if spare > 0:
+            canvas = self.controller.canvas
+            leftover = self.controller.fit_height(canvas.winfo_reqheight() + spare)
+            if leftover > 0:
+                # Too much to stretch nicely: centre the drawing in the extra.
+                self.controller.pack_configure(pady=(4 + leftover // 2, leftover - leftover // 2))
+
+    def _bindings_changed(self, bindings):
+        self.keys.bindings = dict(bindings)
+        try:
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
+                json.dump({"bindings": bindings}, fh, indent=2)
+        except OSError:
+            pass  # saving is a convenience; the binding still works this session
 
     def _fake_tilt_changed(self, *_):
         try:
@@ -496,8 +571,8 @@ class SenderApp:
             self.host.set(self.pcs[0][0])
             self.port.set(self.pcs[0][1])
 
-        for role, var in self.key_vars.items():
-            self.keys.bindings[role] = KEY_CHOICES[var.get()]
+        # Light up the buttons whose keys are held, so you can see what's sent.
+        self.controller.show_held(self.keys.held_targets())
 
         eng = self.engine
         if eng is not None:

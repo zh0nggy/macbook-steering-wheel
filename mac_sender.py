@@ -28,6 +28,7 @@ import key_input
 import protocol
 
 GRAVITY_TOLERANCE = 0.35  # accel-only mode: reject samples this far from 1g
+SHIFT_HOLD = 0.07         # seconds a gear key holds A / X (games poll ~every 16 ms)
 
 
 def is_private(host):
@@ -201,6 +202,8 @@ def main():
     last_print = 0.0
     throttle = brake = 0.0
     gear_up = gear_down = 0
+    last_counts = {"A": 0, "X": 0}
+    press_until = {"A": 0.0, "X": 0.0}
     prev_loop = time.monotonic()
 
     print(f"sending to {args.host}:{args.port} at {args.rate:.0f} Hz -- ctrl-c to stop")
@@ -235,12 +238,19 @@ def main():
                 held_throttle, held_brake, gear_up, gear_down = keys.state()
                 throttle = throttle_ramp.update(held_throttle, dt)
                 brake = brake_ramp.update(held_brake, dt)
+                # The wire format sends held buttons; turn each gear keypress
+                # (a counter change) into a short press of A (up) / X (down).
+                for name, count in (("A", gear_up), ("X", gear_down)):
+                    if count != last_counts[name]:
+                        last_counts[name] = count
+                        press_until[name] = loop_start + SHIFT_HOLD
+            buttons = 0
+            for name, until in press_until.items():
+                if loop_start < until:
+                    buttons |= protocol.BUTTON_BIT[name]
 
             sock.sendto(
-                protocol.pack(
-                    steer, throttle, brake, seq=seq,
-                    gear_up=gear_up, gear_down=gear_down,
-                ),
+                protocol.pack(steer, throttle, brake, seq=seq, buttons=buttons),
                 target,
             )
             seq += 1
@@ -264,16 +274,8 @@ def main():
     except KeyboardInterrupt:
         print("\nstopping -- sending centred frames so the car doesn't stay locked")
         for _ in range(10):
-            # Keep the CURRENT gear counters. Resetting them to 0 would look
-            # like a shift to the receiver and fire a phantom gear change on
-            # the way out.
-            sock.sendto(
-                protocol.pack(
-                    0.0, 0.0, 0.0, seq=seq,
-                    gear_up=gear_up, gear_down=gear_down,
-                ),
-                target,
-            )
+            # Centred, pedals off, every button released.
+            sock.sendto(protocol.pack(0.0, 0.0, 0.0, seq=seq), target)
             seq += 1
             time.sleep(0.01)
     finally:

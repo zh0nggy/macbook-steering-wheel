@@ -1,6 +1,6 @@
 # MacBook Steering Wheel
 
-Tilt your MacBook to steer in PC racing games. The Mac reads its built-in motion sensor and sends steering, throttle, brake and gear presses over WiFi to a Windows PC. The PC turns them into a virtual Xbox 360 controller, so the game sees an ordinary gamepad.
+Tilt your MacBook to steer in PC racing games. The Mac reads its built-in motion sensor and sends steering, pedals and any controller button you bind to a key over WiFi to a Windows PC. The PC turns them into a virtual Xbox 360 controller, so the game sees an ordinary gamepad.
 
 ```
 MacBook (sender_app.py)  --WiFi-->  Windows PC (receiver_app.pyw)  -->  virtual Xbox pad  -->  game
@@ -68,33 +68,35 @@ Drag **Fake tilt** to steer. Everything else (filtering, keys, network, ping) is
 2. On the Mac, your PC should appear in the **Windows PC** list. Click it. If the list stays empty, type the IP shown at the top of the receiver window ("This PC: ...").
 3. Hold the MacBook by its base in your normal driving position, then click **Calibrate centre**.
 4. Click **Start sending**. The receiver's status turns green.
-5. In the receiver's **Game mapping** section, pick your game's preset (or set it up by hand), then launch the game.
+5. Set your keys on the controller picture in the Mac app (see [Setting your keys](#setting-your-keys)), then launch the game.
 
 **How to steer:** roll the laptop left and right, like tilting a tray. Spinning it flat like a wheel on a table won't register.
 
-**Default keys on the Mac:**
+If the Mac app closes or loses connection, the receiver centres the steering and releases the pedals and every button within a quarter of a second.
 
-| Key | Action |
-|---|---|
-| Left Shift | Throttle |
-| Return | Brake |
-| Tab | Button 1 (gear up) |
-| Right Shift | Button 2 (gear down) |
+## Setting your keys
 
-Keys only work while the sender window is in front. You can change them in the sender app, or untick "Use keys" and set a fixed throttle.
+The Mac app shows an Xbox controller. To choose a key for any button:
 
-If the Mac app closes or loses connection, the receiver centres the steering and releases the pedals within a quarter of a second.
+1. Click the button on the controller picture. It turns yellow and shows `?`.
+2. Press the Mac key you want. The key's name appears on the button.
 
-## Game mapping
+Press **Esc** to cancel, or **Backspace** to clear a button. Giving a key to a second button moves it off the first. **Reset to defaults** restores the starting keys.
 
-The receiver decides which part of the Xbox controller each input drives:
+Every button can be bound: A/B/X/Y, both bumpers, both triggers, View, Menu, the Xbox button, the four D-pad directions and both stick clicks. Tilt always drives the left stick. A key on a trigger ramps it up smoothly while held, like a pedal.
 
-- **Preset:** ready-made layouts for Assetto Corsa, Forza, and two generic layouts. Changing any row switches it to Custom.
-- **Steering / Throttle / Brake:** which stick or trigger each one uses.
-- **Button 1 / Button 2:** which pad buttons the Mac's gear keys press.
-- **Test:** presses that button once. Use it when a game's control settings wait for you to press a button to bind.
+**Defaults:**
 
-Settings are saved to `receiver_settings.json` and reload on the next start.
+| Key | Controller | Typical use |
+|---|---|---|
+| Left Shift | Right trigger | Throttle |
+| Return | Left trigger | Brake |
+| Tab | A | Gear up (Assetto Corsa) |
+| Right Shift | X | Gear down (Assetto Corsa) |
+
+While a key is held, its button lights up blue, so you can see exactly what's being sent. Keys only work while the sender window is in front. **Fixed throttle** holds the right trigger at a set level (cruise control); 0 turns it off.
+
+Bindings are saved to `sender_settings.json` on the Mac and reload on the next start. Then bind the same buttons in the game's own controller settings.
 
 ## Tuning
 
@@ -138,7 +140,8 @@ Racing games often add their own controller smoothing or "steering assist". Turn
 |---|---|---|
 | `receiver_app.pyw`, `Start Receiver.bat` | Windows | Receiver app |
 | `sender_app.py`, `Start Sender.command` | Mac | Sender app |
-| `pad_mapping.py` | Windows | Controller layouts and presets |
+| `controller_view.py` | Mac | Clickable controller picture for key bindings |
+| `pad_mapping.py` | Windows | Turns received buttons into virtual pad presses |
 | `app_common.py` | Both | Network discovery and shared UI pieces |
 | `protocol.py` | Both | Packet format. Keep the same copy on both machines. |
 | `imu_reader.py` | Mac | Reads the motion sensor |
