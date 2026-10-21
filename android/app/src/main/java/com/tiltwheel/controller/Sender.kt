@@ -27,6 +27,9 @@ class Sender(private val sensor: SteeringSensor) {
         const val MAX_RATE = 250.0      // packets/sec ceiling
         const val KEEPALIVE = 0.01      // always send at least every 10 ms
         const val FULL_SCALE_DEGREES = 90.0  // must match PHONE_FULL_SCALE in receiver_app.pyw
+        // Trigger ramp, the same timings as the Mac (sender_app.py uses Ramp(0.35, 0.18)).
+        const val RISE_SECONDS = 0.35   // 0 -> 100% while held
+        const val FALL_SECONDS = 0.18   // 100% -> 0 after letting go
     }
 
     @Volatile var target: String? = null
@@ -96,12 +99,19 @@ class Sender(private val sensor: SteeringSensor) {
         var lastFrame: List<Long>? = null
         // Big enough for a layout of every button (about 40 bytes each).
         val buf = ByteArray(4096)
+        // Same pedal feel as the Mac (key_input.Ramp): the touch buttons are on/off,
+        // these ease the trigger values up and down.
+        val rtRamp = Ramp(RISE_SECONDS, FALL_SECONDS)
+        val ltRamp = Ramp(RISE_SECONDS, FALL_SECONDS)
+        var prevLoop = monotonicSeconds()
 
         while (running) {
             val now = monotonicSeconds()
+            val dt = now - prevLoop
+            prevLoop = now
             val steer = steer()
-            val rt = rightTrigger
-            val lt = leftTrigger
+            val rt = rtRamp.update(rightTrigger, dt)
+            val lt = ltRamp.update(leftTrigger, dt)
             val mask = buttons
             val frame = listOf(Math.round(steer * 1e4), Math.round(rt * 1e3), Math.round(lt * 1e3), mask.toLong())
             val since = now - lastSend

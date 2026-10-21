@@ -73,6 +73,19 @@ class ProtocolTest {
     }
 
     @Test
+    fun rampMatchesMac() {
+        // key_input.Ramp(0.35, 0.18): halfway after 0.175 s held, full by 0.35 s,
+        // back to 0 within 0.18 s of letting go.
+        val ramp = Ramp(0.35, 0.18)
+        assertEquals(0.5, ramp.update(1.0, 0.175), 1e-9)
+        assertEquals(1.0, ramp.update(1.0, 0.175), 1e-9)
+        assertEquals(1.0, ramp.update(1.0, 1.0), 1e-9)   // never overshoots
+        assertEquals(0.5, ramp.update(0.0, 0.09), 1e-9)
+        assertEquals(0.0, ramp.update(0.0, 0.09), 1e-9)
+        assertEquals(0.0, ramp.update(0.0, 1.0), 1e-9)   // never below 0
+    }
+
+    @Test
     fun wrap() {
         assertEquals(-170.0, wrapDegrees(190.0), 1e-9)
         assertEquals(170.0, wrapDegrees(-190.0), 1e-9)

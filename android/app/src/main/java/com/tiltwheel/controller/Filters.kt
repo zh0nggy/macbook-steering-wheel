@@ -70,6 +70,25 @@ class RollingStats(private val window: Double = 1.0) {
     }
 }
 
+/**
+ * Port of key_input.Ramp: turns an on/off button into a smooth 0..1 pedal.
+ * Holding it ramps up over `riseSeconds`, letting go drops over `fallSeconds`,
+ * so the throttle eases in like the Mac's keys instead of slamming to 100%.
+ */
+class Ramp(riseSeconds: Double = 0.35, fallSeconds: Double = 0.18) {
+    private val rise = 1.0 / maxOf(riseSeconds, 1e-3)
+    private val fall = 1.0 / maxOf(fallSeconds, 1e-3)
+    var value = 0.0
+        private set
+
+    /** `target` is where the button says to go (0 or 1); `dt` in seconds. */
+    fun update(target: Double, dt: Double): Double {
+        value = if (target > value) minOf(target, value + rise * dt)
+                else maxOf(target, value - fall * dt)
+        return value
+    }
+}
+
 fun wrapDegrees(deg: Double) = ((deg + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
 
 /** Monotonic seconds, the same kind of clock as Python's time.monotonic(). */
