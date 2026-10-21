@@ -1,0 +1,145 @@
+# Builds everything and publishes a GitHub release when you push a version tag:
+#
+#   git tag v1.0.0
+#   git push origin v1.0.0
+#
+# Release files:
+#   TiltWheel-<version>.apk                 Android app (signed if the secrets below are set)
+#   TiltWheel-Receiver-<version>.exe        Windows receiver, no Python needed (still needs ViGEmBus)
+#   TiltWheel-Mac-Sender-<version>.zip      Mac sender, run from source with Start Sender.command
+#
+# Signing secrets (repo Settings > Secrets and variables > Actions):
+#   ANDROID_KEYSTORE_BASE64   the .jks file, base64-encoded
+#   ANDROID_STORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+# Without them the APK is built unsigned, which phones won't install.
+#
+# Actions are pinned to full commit SHAs (version in the comment) so a moved
+# tag can't change what runs with access to the signing key.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:   # "Run workflow" button: builds and uploads artifacts, no release
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+
+      - name: Version from tag
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="0.0.0-dev"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Restore signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+            echo "TILTWHEEL_STORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: the APK will be unsigned."
+          fi
+
+      - name: Test and build
+        working-directory: android
+        env:
+          TILTWHEEL_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          TILTWHEEL_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TILTWHEEL_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon testDebugUnitTest assembleRelease -PversionName=${{ steps.version.outputs.version }}
+
+      - name: Name the APK
+        run: |
+          apk=$(ls android/app/build/outputs/apk/release/*.apk | head -1)
+          suffix=""; [[ "$apk" == *unsigned* ]] && suffix="-unsigned"
+          mkdir -p out && cp "$apk" "out/TiltWheel-${{ steps.version.outputs.version }}${suffix}.apk"
+          rm -f "$RUNNER_TEMP/release.jks"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android
+          path: out/*.apk
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Build receiver exe
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check -r packaging/requirements-build.txt
+          python -m PyInstaller packaging/receiver.spec --noconfirm --distpath dist --workpath build/pyinstaller
+          v="${GITHUB_REF_NAME#v}"; [[ "$GITHUB_REF" == refs/tags/v* ]] || v="0.0.0-dev"
+          mkdir -p out && cp dist/TiltWheel-Receiver.exe "out/TiltWheel-Receiver-$v.exe"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows
+          path: out/*.exe
+
+  mac:
+    # Just a zip of the files the Mac needs; no build step.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Zip Mac sender
+        run: |
+          v="${GITHUB_REF_NAME#v}"; [[ "$GITHUB_REF" == refs/tags/v* ]] || v="0.0.0-dev"
+          name="TiltWheel-Mac-Sender-$v"
+          mkdir -p "stage/$name" out
+          cp sender_app.py mac_sender.py imu_reader.py imu_probe.py key_input.py \
+             controller_view.py app_common.py protocol.py demo_imu.py \
+             "Start Sender.command" README.md "stage/$name/"
+          chmod +x "stage/$name/Start Sender.command"
+          (cd stage && zip -qr "../out/$name.zip" "$name")
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mac
+          path: out/*.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, windows, mac]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # only this job can create the release
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: out
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          files: out/*
+          generate_release_notes: true
+          body: |
+            **Which file do I need?**
+            - **Android phone:** `TiltWheel-*.apk`. Open it on the phone to install (allow "install unknown apps" if asked).
+            - **Windows PC (receiver):** `TiltWheel-Receiver-*.exe`. Install [ViGEmBus](https://github.com/nefarius/ViGEmBus/releases) first, then run the exe. No Python needed.
+            - **Mac (sender):** `TiltWheel-Mac-Sender-*.zip`. Unzip and follow the Mac setup in the README.

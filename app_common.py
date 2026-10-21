@@ -6,13 +6,24 @@ every PC it hears. This is a separate port and message from protocol.py, so
 the frozen wire format is untouched.
 """
 
+import json
 import math
+import os
 import sys
 import socket
 import struct
 import threading
 import time
 import tkinter as tk
+
+def app_dir():
+    """Folder for saved settings: next to the .exe when bundled with
+    PyInstaller (its own files unpack to a temp folder that's wiped on exit),
+    otherwise next to the scripts, as before."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
 
 BEACON_PORT = 5006
 BEACON_MAGIC = b"TILTWHEEL1"
@@ -60,6 +71,19 @@ def unpack_pong(data):
         return None
     magic, timestamp = _ECHO.unpack(data)
     return timestamp if magic == PONG_MAGIC else None
+
+
+# Phone layout: the receiver sends the boxes from its Phone layout window to
+# the phone, which draws them as touch buttons. "TWLAYO" + compact JSON
+# [[target, x, y, w, h], ...] (fractions of the phone screen). Sent a couple
+# of times a second while linked, so edits show up on the phone right away.
+LAYOUT_MAGIC = b"TWLAYO"
+
+
+def pack_layout(boxes):
+    rows = [[b["target"], round(b["x"], 4), round(b["y"], 4), round(b["w"], 4), round(b["h"], 4)]
+            for b in boxes]
+    return LAYOUT_MAGIC + json.dumps(rows, separators=(",", ":")).encode()
 
 
 def ping_display(stats):

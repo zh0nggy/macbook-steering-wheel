@@ -52,6 +52,19 @@ If you'd rather skip the launcher, run this from the project folder (after the `
 sudo python3 sender_app.py
 ```
 
+## Android phone instead of a Mac
+
+The `android/` folder has a phone app that talks to the same receiver. Hold the phone in landscape and turn it like a steering wheel. The app opens on a page to pick your Windows PC, then switches to the steering page: tilt to steer, plus any touch buttons you laid out on the PC. How far you turn for full lock is the **Range** slider in the receiver's Android tuning (45° by default); Deadzone, Gamma, Smoothing and Invert apply as usual (see [Tuning](#tuning)).
+
+**Phone buttons:** clicking **Android** in the receiver opens a Phone layout window. Click a button on the controller picture to add a box for it to the phone drawing, drag boxes to move them, drag a box's corner to resize it, and right-click to remove it. Each button can be added once; its zone on the controller fills in while it's on the phone. While the phone is sending, the layout appears on its steering page within a second, and holding a box presses that pad button (LT/RT boxes are full brake / throttle).
+
+1. Install [Android Studio](https://developer.android.com/studio) and let its setup wizard download the SDK.
+2. On the phone: **Settings → About phone**, tap **Build number** 7 times, then turn on **Developer options → USB debugging**. Plug it in and allow the PC.
+3. In Android Studio, choose **Open** and pick the `android` folder. Wait for Gradle sync, then press **Run** (green triangle) with your phone selected.
+4. Start the receiver on the PC, click **Android** next to "This PC", and press **Start**. Then open the app, tap your PC in the list (or type the IP shown in the receiver window) and tap **Start sending**. The app moves to the steering page and the receiver's status turns green. Hold the phone straight and tap **Calibrate centre**. **Stop** (or the back button) returns to the PC page.
+
+Use either the phone or the Mac, not both at once. The receiver follows whichever sent last.
+
 ## Trying it without a MacBook
 
 You can run the Mac app on Windows, with a slider standing in for the motion sensor:
@@ -102,9 +115,11 @@ Bindings are saved to `sender_settings.json` on the Mac and reload on the next s
 
 ## Tuning
 
+The receiver keeps a separate set of PC settings for each device. Click **Mac** or **Android** next to "This PC" in the receiver window; the sliders switch to that device's values, and each set is saved on its own.
+
 | Setting | Where | What it does |
 |---|---|---|
-| Range | Mac | Degrees of tilt for full lock. Lower means less movement needed. Adjust this first. |
+| Range | Mac / PC (Android) | Degrees of tilt for full lock. Lower means less movement needed. Adjust this first. The Mac sets it in the sender app; for the phone it's in the receiver, shown only when Android is selected. |
 | Steadiness | Mac | How much jitter is smoothed out while you hold still. Lower is steadier. |
 | Turn response | Mac | How quickly smoothing backs off when you turn. Higher means less lag but more wobble. |
 | Deadzone | PC | Ignores small wobbles around centre. |
@@ -137,6 +152,40 @@ Racing games often add their own controller smoothing or "steering assist". Turn
 | `loss` over ~10% (PC **Debug** window) | WiFi is losing packets. Try a less busy network or a phone hotspot. |
 | Worked yesterday, not today | The PC's IP probably changed. Check the receiver window. |
 
+## Making a release
+
+Pushing a version tag builds everything on GitHub and publishes a release with three downloads: the Android app (`.apk`), the Windows receiver as a single `.exe` (no Python needed, ViGEmBus still is), and a zip of the Mac sender.
+
+```bash
+git tag v1.0.0
+```
+
+```bash
+git push origin v1.0.0
+```
+
+The version in the tag becomes the app's version, so there's nothing to edit by hand. The workflow is `.github/workflows/release.yml`; **Actions → Release → Run workflow** builds the files without publishing, to test.
+
+**One-time: Android signing key.** Phones only install signed apps, and updates must be signed with the same key, so make one and keep it safe (back it up; a lost key means users have to uninstall to update). With Android Studio's Java:
+
+```bash
+keytool -genkeypair -v -keystore tiltwheel-release.jks -alias tiltwheel -keyalg RSA -keysize 2048 -validity 10000
+```
+
+Keep the `.jks` outside the repo, then add four secrets under the repo's **Settings → Secrets and variables → Actions**: `ANDROID_KEYSTORE_BASE64` (the file base64-encoded, e.g. `base64 -w0 tiltwheel-release.jks`), `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS` (`tiltwheel`) and `ANDROID_KEY_PASSWORD`. Without them the release still builds, but the APK is unsigned.
+
+**Building locally:** for a signed APK, create `android/keystore.properties` (gitignored) with `storeFile`, `storePassword`, `keyAlias` and `keyPassword`, then run `gradlew assembleRelease` in `android/`. For the receiver exe:
+
+```bash
+python -m pip install -r packaging/requirements-build.txt
+```
+
+```bash
+python -m PyInstaller packaging/receiver.spec --noconfirm
+```
+
+The exe lands in `dist/` and saves its settings next to itself.
+
 ## Files
 
 | File | Runs on | Purpose |
@@ -144,6 +193,9 @@ Racing games often add their own controller smoothing or "steering assist". Turn
 | `receiver_app.pyw`, `Start Receiver.bat` | Windows | Receiver app |
 | `sender_app.py`, `Start Sender.command` | Mac | Sender app |
 | `controller_view.py` | Mac | Clickable controller picture for key bindings |
+| `phone_layout.py` | Windows | Phone layout window: where the phone's touch buttons go |
+| `android/` | Android | Phone app (open this folder in Android Studio) |
+| `packaging/`, `.github/workflows/release.yml` | | Release builds: receiver exe spec and the GitHub release workflow |
 | `pad_mapping.py` | Windows | Turns received buttons into virtual pad presses |
 | `app_common.py` | Both | Network discovery and shared UI pieces |
 | `protocol.py` | Both | Packet format. Keep the same copy on both machines. |
@@ -151,3 +203,5 @@ Racing games often add their own controller smoothing or "steering assist". Turn
 | `demo_imu.py` | Any | Fake sensor for `sender_app.py --demo` |
 | `imu_probe.py` | Mac | Diagnostic: `sudo python3 imu_probe.py` checks the sensor, gyro and axes |
 | `mac_sender.py`, `pad_receiver.py`, `mock_sender.py`, `key_input.py` | | Terminal versions of the apps. The apps reuse their code. |
+
+Written by Dimitar Martin Iliev 

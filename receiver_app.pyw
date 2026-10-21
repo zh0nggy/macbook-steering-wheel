@@ -27,6 +27,7 @@ from tkinter import messagebox
 import app_common
 import mock_sender
 import pad_mapping
+import phone_layout
 import protocol
 from pad_receiver import Failsafe, shape
 
@@ -35,8 +36,22 @@ try:
 except ImportError:
     vg = None
 
-SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+SETTINGS_FILE = os.path.join(app_common.app_dir(),
                              "receiver_settings.json")
+
+# Tuning is kept per sending device: a phone held like a wheel and a tilted
+# laptop want different deadzone / curve / smoothing. The switch at the top of
+# the window picks which set is live; each is saved on its own.
+DEVICES = (("mac", "Mac"), ("android", "Android"))
+TUNING_DEFAULTS = {"range": 45.0, "deadzone": 0.05, "gamma": 1.5, "smooth": 0.0, "invert": False}
+# The phone sends raw rotation (+-PHONE_FULL_SCALE deg = +-1) and this window's
+# Range sets full lock. The Mac applies its own Range slider before sending,
+# so Range here is Android only (hidden on Mac) and nothing stacks.
+PHONE_FULL_SCALE = 90.0
+HINTS = {
+    "mac": "Choose which Mac key presses which button in the Mac app's controller picture.",
+    "android": "Open the Tilt Wheel app on the phone, tap this PC and Start sending.",
+}
 
 
 def resolve_button(name):
@@ -53,9 +68,12 @@ class ReceiverEngine:
     thread.
     """
 
-    def __init__(self, port, dry_run, settings):
+    def __init__(self, port, pad, settings):
         self.port = port
-        self.dry_run = dry_run
+        # The virtual pad belongs to the app, not the engine: Stop / Start must
+        # not unplug it, or games that are already running lose the controller
+        # (they only look for controllers at startup). None = dry run.
+        self.pad = pad
         self.settings = settings  # dict, replaced wholesale by the GUI
         self.status = {"steer": 0.0, "throttle": 0.0, "brake": 0.0,
                        "frames": 0, "dropped": 0, "presses": 0, "held": (),
@@ -76,9 +94,9 @@ class ReceiverEngine:
             self._thread.join(timeout=2.0)
 
     def _run(self):
-        pad = sock = beacon = None
+        pad = self.pad
+        sock = beacon = None
         try:
-            pad = None if self.dry_run else vg.VX360Gamepad()
             sock = app_common.low_latency_socket()
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(("0.0.0.0", self.port))
@@ -89,7 +107,7 @@ class ReceiverEngine:
             self.error = f"{type(exc).__name__}: {exc}"
         finally:
             if pad is not None:
-                pad.reset()
+                pad.reset()   # centred and released, but still plugged in
                 pad.update()
             if sock is not None:
                 sock.close()
@@ -104,7 +122,7 @@ class ReceiverEngine:
         mask = 0
         received = dropped = 0
         last_seq = -1
-        next_ping = 0.0
+        next_ping = next_layout = 0.0
         st = self.status
 
         while not self._stop.is_set():
@@ -148,6 +166,18 @@ class ReceiverEngine:
                 except OSError:
                     pass
 
+            # The phone's on-screen buttons, from the Phone layout window.
+            # Android only; resent twice a second so edits (and a phone that
+            # just connected) catch up quickly. A lost packet is harmless.
+            layout = cfg.get("layout")
+            if (layout is not None and self._sender_addr is not None
+                    and not failsafe.is_stale() and now >= next_layout):
+                next_layout = now + 0.5
+                try:
+                    sock.sendto(app_common.pack_layout(layout), self._sender_addr)
+                except OSError:
+                    pass
+
             if newest is not None:
                 received += 1
                 # A smaller seq means the sender restarted; don't count it as loss.
@@ -157,6 +187,8 @@ class ReceiverEngine:
                 failsafe.note_packet()
 
                 target = -newest["steer"] if cfg["invert"] else newest["steer"]
+                if cfg["range"] is not None:
+                    target = protocol.clamp(target * PHONE_FULL_SCALE / cfg["range"], -1.0, 1.0)
                 target = shape(target, cfg["deadzone"], cfg["gamma"])
                 if cfg["smooth"] > 0.0:
                     steer += (target - steer) * (1.0 - cfg["smooth"])
@@ -216,16 +248,23 @@ class ReceiverApp:
         self.root = root
         self.engine = None
         self.fake = None
+        self.pad = None  # virtual Xbox pad, see _get_pad
+        self.phone_layout = phone_layout.PhoneLayoutWindow(root)
         root.title("Tilt Wheel - Receiver (Windows)")
         root.resizable(False, False)
 
-        self.deadzone = tk.DoubleVar(value=0.05)
-        self.gamma = tk.DoubleVar(value=1.5)
-        self.smooth = tk.DoubleVar(value=0.0)
-        self.invert = tk.BooleanVar(value=False)
+        self.range = tk.DoubleVar(value=TUNING_DEFAULTS["range"])
+        self.deadzone = tk.DoubleVar(value=TUNING_DEFAULTS["deadzone"])
+        self.gamma = tk.DoubleVar(value=TUNING_DEFAULTS["gamma"])
+        self.smooth = tk.DoubleVar(value=TUNING_DEFAULTS["smooth"])
+        self.invert = tk.BooleanVar(value=TUNING_DEFAULTS["invert"])
+        self.device = tk.StringVar(value="mac")
+        self.profiles = {key: dict(TUNING_DEFAULTS) for key, _ in DEVICES}
         self.dry_run = tk.BooleanVar(value=vg is None)
         self.port = tk.IntVar(value=protocol.DEFAULT_PORT)
         self.load_settings()
+        self._live_device = self.device.get()
+        self._apply_profile(self._live_device)
 
         pad = {"padx": 12, "pady": 6}
 
@@ -235,6 +274,12 @@ class ReceiverApp:
                  font=("Segoe UI", 11, "bold")).pack(side="left")
         tk.Label(top, text="  port").pack(side="left")
         tk.Entry(top, textvariable=self.port, width=6).pack(side="left")
+        # Which device is sending: switches the tuning below.
+        switch = tk.Frame(top)
+        switch.pack(side="right")
+        for key, label in DEVICES:
+            tk.Radiobutton(switch, text=label, value=key, variable=self.device,
+                           indicatoron=False, width=10, command=self.switch_device).pack(side="left")
 
         controls = tk.Frame(root)
         controls.pack(fill="x", **pad)
@@ -268,20 +313,21 @@ class ReceiverApp:
         self.debug = app_common.DebugWindow(root, "Tilt Wheel - Receiver debug", self._debug_rows)
         tk.Button(ping_row, text="Debug", command=self.debug.open).pack(side="right")
 
-        tuning = tk.LabelFrame(root, text="Tuning (applies live)")
+        self.tuning = tuning = tk.LabelFrame(root, text=self._tuning_title())
         tuning.pack(fill="x", **pad)
-        app_common.labeled_scale(tuning, 0, "Deadzone", self.deadzone, 0.0, 0.3, 0.01)
-        app_common.labeled_scale(tuning, 1, "Gamma", self.gamma, 1.0, 3.0, 0.05)
-        app_common.labeled_scale(tuning, 2, "Smoothing", self.smooth, 0.0, 0.9, 0.05)
+        app_common.labeled_scale(tuning, 0, "Range (deg)", self.range, 10, PHONE_FULL_SCALE, 1)
+        # Remember the Range row's widgets so it can be hidden on Mac.
+        self.range_row = [w for w in tuning.grid_slaves(row=0)]
+        app_common.labeled_scale(tuning, 1, "Deadzone", self.deadzone, 0.0, 0.3, 0.01)
+        app_common.labeled_scale(tuning, 2, "Gamma", self.gamma, 1.0, 3.0, 0.05)
+        app_common.labeled_scale(tuning, 3, "Smoothing", self.smooth, 0.0, 0.9, 0.05)
         tk.Checkbutton(tuning, text="Invert steering", variable=self.invert).grid(
-            row=3, column=0, columnspan=2, sticky="w")
+            row=4, column=0, columnspan=2, sticky="w")
+        self._show_range()
 
-        tk.Label(root, anchor="w", justify="left", fg=app_common.muted(root), wraplength=380, text=(
-            "Works with any game that supports an Xbox controller. Start this "
-            "before launching the game (most only look for controllers at "
-            "startup). Choose which Mac key presses which button in the Mac "
-            "app's controller picture. Check the pad in Win+R > joy.cpl."
-        )).pack(fill="x", **pad)
+        self.hint = tk.Label(root, anchor="w", justify="left", fg=app_common.muted(root),
+                             wraplength=380, text=self._hint_text())
+        self.hint.pack(fill="x", **pad)
 
         if vg is None:
             self.status.config(text="vgamepad not installed: dry run only "
@@ -289,11 +335,19 @@ class ReceiverApp:
 
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.refresh()
+        # Reopened on Android (the last device used): show the Phone layout
+        # window too, same as clicking Android. After the main window is up,
+        # so the editor opens beside it rather than behind.
+        if self._live_device == "android":
+            root.after_idle(self.phone_layout.open)
 
     def settings(self):
         return {"deadzone": self.deadzone.get(), "gamma": self.gamma.get(),
                 "smooth": self.smooth.get(), "invert": self.invert.get(),
-                "timeout": 0.25}
+                "timeout": 0.25,
+                "range": max(10.0, self.range.get()) if self._live_device == "android" else None,
+                # Only the phone draws buttons; the Mac never gets layouts.
+                "layout": self.phone_layout.layout if self._live_device == "android" else None}
 
     def _debug_rows(self):
         """Rows for the Debug window: (name, value, what it means)."""
@@ -307,13 +361,13 @@ class ReceiverApp:
         rtt = eng.ping.summary()
         return [
             ("linked", "yes" if st["linked"] else "no", "receiving packets right now"),
-            ("from", st["sender"] or "--", "the Mac's address"),
+            ("from", st["sender"] or "--", "the sending device's address"),
             ("steer", f"{st['steer']:+.3f}", "after deadzone / gamma, sent to the pad"),
             ("held", " ".join(st["held"]) or "-", "pad buttons held right now"),
-            ("frames", f"{frames}", "updates applied from the Mac"),
+            ("frames", f"{frames}", f"updates applied from the {self._device_label()}"),
             ("dropped", f"{dropped}", "packets lost or skipped as stale"),
             ("loss", loss, "dropped / total. Fine under ~10%"),
-            ("ping avg", f"{rtt[0]:.1f} ms" if rtt else "--", "round trip to the Mac"),
+            ("ping avg", f"{rtt[0]:.1f} ms" if rtt else "--", f"round trip to the {self._device_label()}"),
             ("ping max", f"{rtt[1]:.1f} ms" if rtt else "--", "worst round trip, last second"),
         ]
 
@@ -323,24 +377,91 @@ class ReceiverApp:
                 data = json.load(fh)
         except (OSError, ValueError):
             return  # first run, or a broken file: keep defaults
-        for key, var in (("deadzone", self.deadzone), ("gamma", self.gamma),
-                         ("smooth", self.smooth), ("invert", self.invert),
-                         ("port", self.port)):
-            if key in data:
-                try:
-                    var.set(data[key])
-                except tk.TclError:
-                    pass
+        if data.get("device") in self.profiles:
+            self.device.set(data["device"])
+        if "port" in data:
+            try:
+                self.port.set(data["port"])
+            except tk.TclError:
+                pass
+        # Files from before the device switch hold one flat set: that's the Mac's.
+        saved = data.get("profiles") or {"mac": data}
+        for device, profile in self.profiles.items():
+            stored = saved.get(device)
+            if not isinstance(stored, dict):
+                continue
+            for key, default in TUNING_DEFAULTS.items():
+                value = stored.get(key)
+                if isinstance(value, (int, float)) and not isinstance(default, bool):
+                    profile[key] = float(value)
+                elif isinstance(value, bool) and isinstance(default, bool):
+                    profile[key] = value
 
     def save_settings(self):
         try:
-            data = {"deadzone": self.deadzone.get(), "gamma": self.gamma.get(),
-                    "smooth": self.smooth.get(), "invert": self.invert.get(),
-                    "port": int(self.port.get())}
+            self._store_profile(self._live_device)
+            data = {"device": self._live_device, "port": int(self.port.get()),
+                    "profiles": self.profiles}
             with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
         except (OSError, ValueError, tk.TclError):
             pass  # saving is a convenience; never block closing the app
+
+    def _store_profile(self, device):
+        """Copy the sliders into `device`'s saved set."""
+        try:
+            self.profiles[device] = {"range": self.range.get(),
+                                     "deadzone": self.deadzone.get(), "gamma": self.gamma.get(),
+                                     "smooth": self.smooth.get(), "invert": self.invert.get()}
+        except tk.TclError:
+            pass
+
+    def _apply_profile(self, device):
+        """Move the sliders to `device`'s saved set."""
+        profile = self.profiles[device]
+        self.range.set(profile["range"])
+        self.deadzone.set(profile["deadzone"])
+        self.gamma.set(profile["gamma"])
+        self.smooth.set(profile["smooth"])
+        self.invert.set(profile["invert"])
+
+    def _show_range(self):
+        """Range row on Android only: the Mac sets its Range in the sender app."""
+        for widget in self.range_row:
+            if self._live_device == "android":
+                widget.grid()
+            else:
+                widget.grid_remove()
+
+    def _device_label(self):
+        return dict(DEVICES)[self._live_device]
+
+    def _tuning_title(self):
+        return f"Tuning for {self._device_label()} (applies live)"
+
+    def _hint_text(self):
+        return ("Works with any game that supports an Xbox controller. Start this "
+                "before launching the game (most only look for controllers at "
+                f"startup). {HINTS[self._live_device]} Check the pad in Win+R > joy.cpl.")
+
+    def switch_device(self):
+        """Device switch moved: keep the old device's tuning, load the new one's.
+        The engine picks the new values up on the next refresh."""
+        new = self.device.get()
+        if new == self._live_device:
+            return
+        self._store_profile(self._live_device)
+        self._live_device = new
+        self._apply_profile(new)
+        self.tuning.config(text=self._tuning_title())
+        self._show_range()
+        self.hint.config(text=self._hint_text())
+        self.save_settings()
+        # Android: open the editor for where the phone's on-screen controls go.
+        if new == "android":
+            self.phone_layout.open()
+        else:
+            self.phone_layout.close()
 
     def toggle(self):
         if self.engine is not None:
@@ -356,9 +477,40 @@ class ReceiverApp:
         except (tk.TclError, ValueError):
             messagebox.showerror("Tilt Wheel", "Port must be a number.")
             return
-        self.engine = ReceiverEngine(port, self.dry_run.get(), self.settings())
+        pad = None
+        if not self.dry_run.get():
+            try:
+                pad = self._get_pad()
+            except Exception as exc:
+                hint = ("\n\nViGEmBus doesn't look installed. Reboot after installing it."
+                        if "VIGEM" in str(exc).upper() or "bus" in str(exc).lower() else "")
+                messagebox.showerror("Tilt Wheel", f"{type(exc).__name__}: {exc}{hint}")
+                return
+        self.engine = ReceiverEngine(port, pad, self.settings())
         self.engine.start()
         self.start_btn.config(text="Stop")
+
+    def _get_pad(self):
+        """The one virtual Xbox pad, created on first Start and kept until the
+        window closes, so the game sees the same controller across Stop/Start."""
+        if self.pad is None:
+            self.pad = vg.VX360Gamepad()
+        return self.pad
+
+    def _unplug_pad(self):
+        """Remove the virtual pad from Windows now. vgamepad only does this in
+        __del__, which can run late (or never, if anything still holds the
+        object), leaving a dead controller showing in games and joy.cpl."""
+        pad, self.pad = self.pad, None
+        if pad is None:
+            return
+        try:
+            from vgamepad.win import vigem_client as vcli
+            vcli.vigem_target_remove(pad._busp, pad._devicep)
+        except Exception:
+            return  # fall back to vgamepad's __del__ / process exit
+        # Removed already: when vgamepad's __del__ runs later it calls remove
+        # again (a harmless no-op on a removed target) and frees the memory.
 
     def stop_engine(self):
         if self.fake is not None:
@@ -406,7 +558,7 @@ class ReceiverApp:
                     self.status.config(text=f"Receiving from {source}", fg="#1d7a35")
                 else:
                     self.status.config(
-                        text="Waiting for the Mac... (controls centred)", fg="#b06000")
+                        text=f"Waiting for the {self._device_label()}... (controls centred)", fg="#b06000")
                 text, color = app_common.ping_display(eng.ping)
                 self.ping_label.config(text=text, fg=color)
         elif vg is not None:
@@ -416,6 +568,7 @@ class ReceiverApp:
     def close(self):
         if self.engine is not None:
             self.stop_engine()
+        self._unplug_pad()
         self.save_settings()
         self.root.after_cancel(self._timer)
         self.root.destroy()

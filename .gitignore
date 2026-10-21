@@ -2,3 +2,9 @@ __pycache__/
 *.pyc
 receiver_settings.json
 sender_settings.json
+phone_layout.json
+.build-venv/
+build/
+dist/
+*.jks
+*.keystore

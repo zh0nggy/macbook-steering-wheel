@@ -1,0 +1,3 @@
+# Exact versions for building TiltWheel-Receiver.exe (local and in CI).
+pyinstaller==6.22.3
+vgamepad==0.1.0

@@ -71,7 +71,7 @@ FALLBACK_LATERAL = 0
 FALLBACK_VERTICAL = 2
 
 
-SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+SETTINGS_FILE = os.path.join(app_common.app_dir(),
                              "sender_settings.json")
 
 
