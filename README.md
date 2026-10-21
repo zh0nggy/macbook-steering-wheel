@@ -1,212 +1,303 @@
-# MacBook Steering Wheel
+# Steering Wheel Emulator
 
-Tilt your MacBook to steer in PC racing games. The Mac reads its built-in motion sensor and sends steering, pedals and any controller button you bind to a key over WiFi to a Windows PC. The PC turns them into a virtual Xbox 360 controller, so the game sees an ordinary gamepad.
+Use an Android phone or a supported Apple Silicon MacBook to steer in Windows racing games over WiFi. TiltWheel sends steering, pedals, and buttons to a Windows receiver, which presents them to the game as a virtual Xbox 360 controller.
 
+```text
+Android phone or MacBook  --WiFi-->  Windows receiver  -->  virtual Xbox controller  -->  game
 ```
-MacBook (sender_app.py)  --WiFi-->  Windows PC (receiver_app.pyw)  -->  virtual Xbox pad  -->  game
-```
 
-Works with any game that supports an Xbox controller.
+For PC games that support Xbox controllers.
 
-## What you need
+## Download
 
-- An Apple Silicon MacBook with a motion sensor (support depends on the model).
-- A Windows 10/11 PC that runs the game.
-- Both machines on the same WiFi network.
+**[Download the latest release](https://github.com/zh0nggy/steering-wheel-emulator/releases/latest)** and expand **Assets** if the downloads are hidden.
 
-## Windows setup
+Download the **Windows receiver** and **one sender** for your phone or Mac:
 
-1. Install **Python 3** from [python.org](https://www.python.org/downloads/). During install, tick **"Add Python to PATH"**.
-2. Install **ViGEmBus** (the virtual controller driver) from the [official releases page](https://github.com/nefarius/ViGEmBus/releases). Download `ViGEmBusSetup_x64.msi`, run it, and reboot if asked.
-3. Install the Python package:
-   ```bash
-   python -m pip install vgamepad
-   ```
-4. Download this repo and double-click **`Start Receiver.bat`**.
-5. Press **Start**. If Windows Firewall asks, click **Allow** (tick Private networks).
+| Device | Release file | What you need |
+|---|---|---|
+| Windows gaming PC | `TiltWheel-Receiver-<version>.exe` | Windows 10/11, 64-bit, and the ViGEmBus driver. Python is bundled. |
+| Android phone | `TiltWheel-<version>.apk` | Android 8.0 or newer with an accelerometer. Install the APK directly; Android Studio is not required. |
+| MacBook | `TiltWheel-Mac-Sender-<version>.zip` | A supported Apple Silicon MacBook with a motion sensor, Python with Tkinter, and `macimu`. |
 
-To check the virtual controller works, press **Test: fake sweep**, then open Win+R → `joy.cpl`. An "Xbox 360 Controller" should appear, and its stick moves left and right.
+For example, the first release contains `TiltWheel-Receiver-0.1.0.exe`, `TiltWheel-0.1.0.apk`, and `TiltWheel-Mac-Sender-0.1.0.zip`.
 
-## Mac setup
+Use packages from the same release on both devices. The automatic **Source code** archives are for development; the files above are the release downloads.
 
-1. Install **Python 3** from [python.org](https://www.python.org/downloads/macos/). It includes Tkinter, which the app needs. If you use Homebrew instead: `brew install python python-tk`.
-2. Install the sensor library:
+Both devices must be on the same local network. Use one sender at a time: the receiver follows whichever device sent last.
+
+## 1. Set up the Windows receiver
+
+1. Install **ViGEmBus**, the virtual controller driver, from its [official releases page](https://github.com/nefarius/ViGEmBus/releases). Run the x64 installer and reboot if requested.
+2. Download `TiltWheel-Receiver-<version>.exe` from the TiltWheel release.
+3. Put the EXE in a folder you can write to, such as `Documents\TiltWheel`. The receiver saves its settings and phone layout beside the EXE.
+4. Double-click the EXE and choose **Android** or **Mac** next to **This PC**.
+5. Press **Start**. If Windows Firewall asks, allow the receiver on **Private networks**.
+6. Start the receiver before launching your game.
+
+The Windows release does not require Python, Java, or a separate `vgamepad` installation.
+
+To check the virtual controller, press **Test: fake sweep**, then press Win+R and enter `joy.cpl`. An Xbox 360 controller should appear and its stick should move left and right. Press **Stop fake sweep** before connecting your sender. Leave **Dry run (no virtual pad)** unchecked when playing.
+
+## 2. Set up your sender
+
+Choose Android or Mac.
+
+### Android phone
+
+1. On your phone, open the [latest release](https://github.com/zh0nggy/steering-wheel-emulator/releases/latest) and download `TiltWheel-<version>.apk`.
+2. Open the APK. If Android asks, allow your browser or file manager to **install unknown apps**, then complete the installation.
+3. Connect the phone to the same WiFi network as your PC and open **Tilt Wheel**.
+4. With the Windows receiver started and **Android** selected, tap your PC in the phone's list. If it does not appear, enter the IP address shown beside **This PC** in the receiver.
+5. Tap **Start sending**. Hold the phone in landscape in your neutral driving position and tap **Calibrate centre**.
+6. Turn the phone like a steering wheel. The receiver's status should turn green and its steering meter should move.
+
+Tap **Stop**, or use the back button, to return to the PC selection page.
+
+**Add touch buttons:** selecting **Android** in the receiver opens the Phone layout window. Click a button on the controller picture to add it to the phone drawing. Drag a box to move it, drag its corner to resize it, and right-click to remove it. Each button can be added once.
+
+While connected, layout edits appear on the phone within about a second. Hold a box to press that controller button. **LT** and **RT** boxes apply full brake and throttle.
+
+### MacBook
+
+The Mac release is a ZIP of the sender scripts and launcher. It still needs Python and the sensor library; it is not a standalone macOS app.
+
+1. Install **Python 3** from [python.org](https://www.python.org/downloads/macos/), which includes Tkinter.
+2. Open Terminal and install the sensor library:
+
    ```bash
    python3 -m pip install macimu
    ```
-3. Get the code. On the GitHub page click **Code → Download ZIP**, then open the ZIP in your Downloads folder to unzip it. This creates a folder called `macbook-steering-wheel-main`.
-4. Open Terminal (Cmd+Space, type "Terminal") and run these three commands:
+
+3. Download `TiltWheel-Mac-Sender-<version>.zip` from the release and unzip it.
+4. In Terminal, type `cd ` (including the space), drag the extracted sender folder into the Terminal window, and press Enter. This selects the correct folder regardless of the release version or where you extracted it.
+5. Make the launcher executable:
+
    ```bash
-   cd ~/Downloads/macbook-steering-wheel-main
    chmod +x "Start Sender.command"
-   xattr -dr com.apple.quarantine .
    ```
-   The first goes into the project folder. The second makes the launcher runnable. The third stops macOS from blocking it with "Apple could not verify..." (this happens with downloaded files).
 
-   If you unzipped it somewhere else, or used `git clone`, change the `cd` line to match. You can also type `cd `, drag the folder into Terminal, and press Enter.
-5. Double-click **`Start Sender.command`** and enter your Mac password. Reading the motion sensor needs admin rights.
+6. Double-click **Start Sender.command** in Finder and enter your Mac password when requested. Reading the motion sensor requires admin rights.
 
-If you'd rather skip the launcher, run this from the project folder (after the `cd` above) instead:
+   You can also start it from Terminal in the sender folder:
+
+   ```bash
+   sudo python3 sender_app.py
+   ```
+
+7. With the Windows receiver started and **Mac** selected, choose your PC in the sender's **Windows PC** list. If it does not appear, enter the IP shown in the receiver.
+8. Hold the MacBook by its base in your normal driving position and click **Calibrate centre**.
+9. Click **Start sending**, configure your keys below, then launch the game on the PC.
+
+To steer, roll the laptop left and right like tilting a tray. Spinning it flat on a table does not produce the same motion. Motion sensor support depends on the MacBook model.
+
+If macOS blocks the launcher, allow it through **System Settings → Privacy & Security → Open Anyway**, where available. Alternatively, from inside the extracted sender folder, remove its download quarantine:
 
 ```bash
-sudo python3 sender_app.py
+xattr -dr com.apple.quarantine .
 ```
 
-## Android phone instead of a Mac
+## Controls
 
-The `android/` folder has a phone app that talks to the same receiver. Hold the phone in landscape and turn it like a steering wheel. The app opens on a page to pick your Windows PC, then switches to the steering page: tilt to steer, plus any touch buttons you laid out on the PC. How far you turn for full lock is the **Range** slider in the receiver's Android tuning (45° by default); Deadzone, Gamma, Smoothing and Invert apply as usual (see [Tuning](#tuning)).
+### Mac keyboard bindings
 
-**Phone buttons:** clicking **Android** in the receiver opens a Phone layout window. Click a button on the controller picture to add a box for it to the phone drawing, drag boxes to move them, drag a box's corner to resize it, and right-click to remove it. Each button can be added once; its zone on the controller fills in while it's on the phone. While the phone is sending, the layout appears on its steering page within a second, and holding a box presses that pad button (LT/RT boxes are full brake / throttle).
+Click a button on the controller picture, then press the key you want to assign. Press **Esc** to cancel or **Backspace** to clear the binding. Assigning a key to another button moves it from the previous button.
 
-1. Install [Android Studio](https://developer.android.com/studio) and let its setup wizard download the SDK.
-2. On the phone: **Settings → About phone**, tap **Build number** 7 times, then turn on **Developer options → USB debugging**. Plug it in and allow the PC.
-3. In Android Studio, choose **Open** and pick the `android` folder. Wait for Gradle sync, then press **Run** (green triangle) with your phone selected.
-4. Start the receiver on the PC, click **Android** next to "This PC", and press **Start**. Then open the app, tap your PC in the list (or type the IP shown in the receiver window) and tap **Start sending**. The app moves to the steering page and the receiver's status turns green. Hold the phone straight and tap **Calibrate centre**. **Stop** (or the back button) returns to the PC page.
+| Default key | Controller input | Typical use |
+|---|---|---|
+| Right Shift | Left trigger | Brake |
+| Left Shift | Right trigger | Throttle |
+| Tab | A | Gear up |
+| Return | X | Gear down |
 
-Use either the phone or the Mac, not both at once. The receiver follows whichever sent last.
+Every controller button can be bound: A/B/X/Y, bumpers, triggers, View, Menu, Xbox, D-pad directions, and stick clicks. Tilt drives the left stick. Trigger keys ramp up smoothly while held.
 
-## Trying it without a MacBook
+Keep the sender window in front: it reads keys only while focused. Pressed buttons light up blue. **Fixed throttle** holds the right trigger at a chosen level; set it to 0 to turn it off.
 
-You can run the Mac app on Windows, with a slider standing in for the motion sensor:
+**Invert** is enabled by default in the Mac sender. Change it if steering goes the wrong way. Saved bindings take priority over defaults; use **Reset to defaults** to restore the table above.
+
+Bindings and sender settings are saved beside the Mac scripts in `sender_settings.json`. Configure the corresponding controls in your game's controller settings.
+
+### Connection loss
+
+If the sender stops or the connection is lost, the receiver centres steering and releases pedals and buttons after about a quarter of a second.
+
+## Tuning
+
+The receiver saves separate tuning profiles for Mac and Android. Choose the device beside **This PC** to adjust its profile.
+
+| Setting | Where | What it does |
+|---|---|---|
+| Range | Mac sender / receiver for Android | Degrees of tilt for full lock; 45° by default. Lower values need less movement. Adjust this first. |
+| Steadiness | Mac sender | Lower values smooth more jitter while holding still. |
+| Turn response | Mac sender | Higher values respond faster during turns, with less smoothing. |
+| Deadzone | Receiver | Ignores small movements around centre. |
+| Gamma | Receiver | Values above 1 give finer control near centre. |
+| Smoothing | Receiver | Adds smoothing. Leave at 0 unless steering is jittery. |
+| Invert | Sender or receiver | Reverses steering direction. |
+
+The **Ping** display shows average round-trip time, with the maximum in brackets. Under 10 ms is a good target. If latency or packet loss is high, try a less busy WiFi network or connect your sender to the PC's Mobile Hotspot.
+
+Some games add controller smoothing or steering assist. Reducing those settings may improve steering response.
+
+## Updating
+
+1. Download the Windows receiver and your sender from the same new release.
+2. Close the running apps.
+3. Replace the Windows EXE in its existing folder to keep `receiver_settings.json` and `phone_layout.json`.
+4. On Android, install the new APK over the existing app. Release updates must be signed with the same key. A previously installed Android Studio debug build may need to be uninstalled first.
+5. On Mac, extract the new ZIP into a new folder. Copy `sender_settings.json` from your previous sender folder if you want to keep your settings, then launch the new sender.
+
+## Troubleshooting
+
+| Problem | What to check |
+|---|---|
+| No controller in `joy.cpl` | Install ViGEmBus and reboot if requested. Make sure **Dry run** is unchecked. |
+| Receiver stays on “Waiting…” | Start sending on the phone or Mac. Check both devices are on the same network and the receiver is allowed through Windows Firewall. |
+| PC does not appear in the sender list | Enter the receiver's **This PC** IP manually. Guest, school, and office networks may block communication between devices; try a hotspot. |
+| APK will not install | Check the phone runs Android 8.0 or newer, permit installation from your browser/file manager, and use a signed release APK. If replacing a debug build, uninstall that build first. |
+| Mac cannot load `macimu` | Install it for the Python used by the launcher. If it is missing when launched with `sudo`, use `sudo python3 -m pip install macimu`. |
+| Mac reports a permission/root error | Launch with **Start Sender.command** or `sudo python3 sender_app.py`. |
+| macOS blocks the launcher | Follow the Mac setup instructions above for **Open Anyway** or removing the extracted folder's quarantine. |
+| Game does not react | Start the receiver before launching the game, turn off **Dry run**, and check the game's controller bindings. |
+| Steering goes the wrong way | Toggle **Invert**. |
+| Steering drifts off centre | Hold the sender neutral and use **Calibrate centre** again. |
+| Settings are not retained on Windows | Keep the EXE in a writable folder and preserve the JSON files beside it. |
+| Mac Debug shows many rejected sensor samples | Tilt the laptop in place instead of sliding it sideways. |
+| High packet loss or ping | Try a less busy network or the PC's Mobile Hotspot. |
+| Connection worked before but fails now | Check whether the PC's IP address changed. |
+
+## Development and source builds
+
+Clone the repository for the full source tree and build files:
+
+```bash
+git clone https://github.com/zh0nggy/steering-wheel-emulator.git
+cd steering-wheel-emulator
+```
+
+### Windows receiver
+
+From the repository root in PowerShell:
+
+```powershell
+python -m venv .build-venv
+$env:VGAMEPAD_SKIP_VIGEMBUS_INSTALL = "true"
+.\.build-venv\Scripts\python.exe -m pip install -r packaging/requirements-build.txt
+```
+
+The skip flag prevents an interactive ViGEmBus installer from blocking a build machine. The dependencies pin an upstream `vgamepad` commit that supports this flag. ViGEmBus is still required on the gaming PC.
+
+Run the receiver from source:
+
+```powershell
+.\.build-venv\Scripts\python.exe receiver_app.pyw
+```
+
+Or build the standalone EXE:
+
+```powershell
+.\.build-venv\Scripts\python.exe -m PyInstaller packaging/receiver.spec --noconfirm
+```
+
+The EXE is written to `dist/TiltWheel-Receiver.exe`.
+
+### Android app
+
+Open the `android/` folder in Android Studio, let Gradle sync, and run the app on a phone with USB debugging enabled.
+
+For a signed local release, create the gitignored file `android/keystore.properties`:
+
+```properties
+storeFile=C:/path/to/tiltwheel-release.jks
+storePassword=your-keystore-password
+keyAlias=tiltwheel
+keyPassword=your-key-password
+```
+
+Then, from `android/` in PowerShell:
+
+```powershell
+.\gradlew.bat testDebugUnitTest assembleRelease -PversionName=0.1.1
+```
+
+The APK is written under `android/app/build/outputs/apk/release/`. Without a signing configuration, the release APK is unsigned and cannot be installed.
+
+### Mac sender and demo
+
+The source sender uses the same dependencies and launcher as the Mac release. Follow the Mac setup above.
+
+To try the sender without a supported MacBook, run this from the full source checkout with a Python installation that includes Tkinter:
 
 ```bash
 python sender_app.py --demo
 ```
 
-Drag **Fake tilt** to steer. Everything else (filtering, keys, network, ping) is the real code, so you can test the whole setup on one PC: open the receiver, press Start, then pick the PC in the demo window (or type `127.0.0.1`) and press **Start sending**.
-
-## Playing
-
-1. On Windows, open the receiver and press **Start**, **before** launching the game. Most games only look for controllers at startup.
-2. On the Mac, your PC should appear in the **Windows PC** list. Click it. If the list stays empty, type the IP shown at the top of the receiver window ("This PC: ...").
-3. Hold the MacBook by its base in your normal driving position, then click **Calibrate centre**.
-4. Click **Start sending**. The receiver's status turns green.
-5. Set your keys on the controller picture in the Mac app (see [Setting your keys](#setting-your-keys)), then launch the game.
-
-**How to steer:** roll the laptop left and right, like tilting a tray. Spinning it flat like a wheel on a table won't register.
-
-If the Mac app closes or loses connection, the receiver centres the steering and releases the pedals and every button within a quarter of a second.
-
-## Setting your keys
-
-The Mac app shows an Xbox controller. To choose a key for any button:
-
-1. Click the button on the controller picture. It turns yellow and shows `?`.
-2. Press the Mac key you want. The key's name appears on the button.
-
-Press **Esc** to cancel, or **Backspace** to clear a button. Giving a key to a second button moves it off the first. **Reset to defaults** restores the starting keys.
-
-Every button can be bound: A/B/X/Y, both bumpers, both triggers, View, Menu, the Xbox button, the four D-pad directions and both stick clicks. Tilt always drives the left stick. A key on a trigger ramps it up smoothly while held, like a pedal.
-
-**Defaults:**
-
-| Key | Controller | Typical use |
-|---|---|---|
-| Right Shift | Left trigger | Brake |
-| Left Shift | Right trigger | Throttle |
-| Tab | A | Gear up (Assetto Corsa) |
-| Return | X | Gear down (Assetto Corsa) |
-
-**Invert** steering is on by default. Untick it if the car turns the wrong way. If you set keys before, press **Reset to defaults** to switch to these, since saved keys take priority.
-
-While a key is held, its button lights up blue, so you can see exactly what's being sent. Keys only work while the sender window is in front. **Fixed throttle** holds the right trigger at a set level (cruise control); 0 turns it off.
-
-Bindings are saved to `sender_settings.json` on the Mac and reload on the next start. Then bind the same buttons in the game's own controller settings.
-
-## Tuning
-
-The receiver keeps a separate set of PC settings for each device. Click **Mac** or **Android** next to "This PC" in the receiver window; the sliders switch to that device's values, and each set is saved on its own.
-
-| Setting | Where | What it does |
-|---|---|---|
-| Range | Mac / PC (Android) | Degrees of tilt for full lock. Lower means less movement needed. Adjust this first. The Mac sets it in the sender app; for the phone it's in the receiver, shown only when Android is selected. |
-| Steadiness | Mac | How much jitter is smoothed out while you hold still. Lower is steadier. |
-| Turn response | Mac | How quickly smoothing backs off when you turn. Higher means less lag but more wobble. |
-| Deadzone | PC | Ignores small wobbles around centre. |
-| Gamma | PC | Above 1 gives finer control near centre. |
-| Smoothing | PC | Extra smoothing. Leave at 0 unless steering is jittery. |
-| Invert | Either | Flips steering direction. |
-
-### Latency
-
-Both windows show a **Ping** readout under the stats line: the round-trip time between the two machines, averaged over the last second, with the worst value in brackets. Each side measures it on its own, so the two numbers can differ slightly. The Mac also shows how many packets per second it's sending. Green (under 10 ms) is good. Orange or red means WiFi is the bottleneck. Try a less busy network, or turn on the PC's Mobile Hotspot and connect the Mac to it.
-
-The rate is higher while you're turning (up to 250 per second) and drops to about 100 per second when you hold still.
-
-Racing games often add their own controller smoothing or "steering assist". Turn those down in the game's settings, or correct steering can feel delayed.
-
-## Troubleshooting
-
-| Problem | Fix |
-|---|---|
-| "Apple could not verify..." on the Mac | Run `xattr -dr com.apple.quarantine .` in the project folder, or allow it in System Settings → Privacy & Security → Open Anyway. |
-| Mac app says it can't load macimu | Run `sudo python3 -m pip install macimu`. |
-| Permission / root error | Open the app with `Start Sender.command` or `sudo python3 sender_app.py`. |
-| PC doesn't appear in the Mac's list | Type the IP from the receiver window instead. |
-| Receiver stays on "Waiting for the Mac..." | Check that both machines are on the same WiFi (not a guest network), and that Python is allowed through Windows Firewall. School and office WiFi often blocks devices from talking to each other; try a phone hotspot. |
-| No controller in `joy.cpl` | ViGEmBus isn't installed, or needs a reboot. |
-| Game doesn't react | Start the receiver before the game, then restart the game. Check the game's controller bindings match the mapping. |
-| Steering goes the wrong way | Tick **Invert**. |
-| Steering drifts off centre | Click **Calibrate centre** again. |
-| `rejected` climbs fast (Mac **Debug** window) | You're sliding the laptop instead of tilting it in place. |
-| `loss` over ~10% (PC **Debug** window) | WiFi is losing packets. Try a less busy network or a phone hotspot. |
-| Worked yesterday, not today | The PC's IP probably changed. Check the receiver window. |
+The **Fake tilt** slider replaces the sensor. Start the receiver and select your PC, or enter `127.0.0.1` when both apps run on the same PC, then click **Start sending**.
 
 ## Making a release
 
-Pushing a version tag builds everything on GitHub and publishes a release with three downloads: the Android app (`.apk`), the Windows receiver as a single `.exe` (no Python needed, ViGEmBus still is), and a zip of the Mac sender.
+The workflow is [`.github/workflows/release.yml`](https://github.com/zh0nggy/steering-wheel-emulator/blob/main/.github/workflows/release.yml). A tag beginning with `v` builds all three packages and publishes a GitHub Release after all builds succeed.
 
-```bash
-git tag v1.0.0
+### Android signing setup
+
+Create one release keystore outside the repository and back it up with its passwords. Every Android update must use the same signing key.
+
+For example, using Android Studio's bundled Java on Windows:
+
+```powershell
+New-Item -ItemType Directory -Path "$env:USERPROFILE\TiltWheelKeys" -Force
+& "C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe" -genkeypair -v -keystore "$env:USERPROFILE\TiltWheelKeys\tiltwheel-release.jks" -alias tiltwheel -keyalg RSA -keysize 2048 -validity 10000
 ```
 
-```bash
-git push origin v1.0.0
+Under **Settings → Secrets and variables → Actions**, configure these repository secrets:
+
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | The Base64-encoded contents of the keystore file. |
+| `ANDROID_STORE_PASSWORD` | The keystore password. |
+| `ANDROID_KEY_ALIAS` | `tiltwheel`, if using the command above. |
+| `ANDROID_KEY_PASSWORD` | The key password; this can be the same as the keystore password. |
+
+With GitHub CLI, upload the key without printing its contents:
+
+```powershell
+[Convert]::ToBase64String(
+    [IO.File]::ReadAllBytes("$env:USERPROFILE\TiltWheelKeys\tiltwheel-release.jks")
+) | gh secret set ANDROID_KEYSTORE_BASE64 --repo zh0nggy/steering-wheel-emulator
 ```
 
-The version in the tag becomes the app's version, so there's nothing to edit by hand. The workflow is `.github/workflows/release.yml`; **Actions → Release → Run workflow** builds the files without publishing, to test.
+Keep the keystore and passwords out of Git. If the key secret is absent, the workflow produces an unsigned APK; incomplete signing credentials can fail the Android build.
 
-**One-time: Android signing key.** Phones only install signed apps, and updates must be signed with the same key, so make one and keep it safe (back it up; a lost key means users have to uninstall to update). With Android Studio's Java:
+### Preview and publish
 
-```bash
-keytool -genkeypair -v -keystore tiltwheel-release.jks -alias tiltwheel -keyalg RSA -keysize 2048 -validity 10000
-```
+1. Push the intended changes to `main`.
+2. Open **Actions → Release → Run workflow**, selecting `main`. This builds preview packages without publishing a release.
+3. When it finishes, open the overall run **Summary** and scroll to **Artifacts**. Download `windows`, `android`, and `mac`, then extract the artifact ZIPs to find the packages. Artifact downloads require signing into GitHub.
+4. Try the packaged apps, then create and push a new version tag. For example, after `v0.1.0`:
 
-Keep the `.jks` outside the repo, then add four secrets under the repo's **Settings → Secrets and variables → Actions**: `ANDROID_KEYSTORE_BASE64` (the file base64-encoded, e.g. `base64 -w0 tiltwheel-release.jks`), `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS` (`tiltwheel`) and `ANDROID_KEY_PASSWORD`. Without them the release still builds, but the APK is unsigned.
+   ```bash
+   git tag -a v0.1.1 -m "TiltWheel v0.1.1"
+   git push origin v0.1.1
+   ```
 
-**Building locally:** for a signed APK, create `android/keystore.properties` (gitignored) with `storeFile`, `storePassword`, `keyAlias` and `keyPassword`, then run `gradlew assembleRelease` in `android/`. For the receiver exe:
+5. Wait for all build jobs and the final **release** job to pass. The downloads then appear under **Assets** on the [Releases page](https://github.com/zh0nggy/steering-wheel-emulator/releases).
 
-```bash
-python -m pip install -r packaging/requirements-build.txt
-```
+Use increasing numeric versions such as `v0.1.1`, `v0.1.2`, and `v0.2.0`. The workflow uses the tag for filenames and the Android app version; desktop apps do not currently show that version in their windows.
 
-```bash
-python -m PyInstaller packaging/receiver.spec --noconfirm
-```
+## Source files
 
-The exe lands in `dist/` and saves its settings next to itself.
-
-On a build machine without ViGEmBus, set `VGAMEPAD_SKIP_VIGEMBUS_INSTALL=true`
-before installing the build requirements (`$env:VGAMEPAD_SKIP_VIGEMBUS_INSTALL = "true"`
-in PowerShell). This skips the interactive driver installer; the release workflow
-sets it automatically. Players still need to install ViGEmBus on their gaming PC.
-
-## Files
-
-| File | Runs on | Purpose |
-|---|---|---|
-| `receiver_app.pyw`, `Start Receiver.bat` | Windows | Receiver app |
-| `sender_app.py`, `Start Sender.command` | Mac | Sender app |
-| `controller_view.py` | Mac | Clickable controller picture for key bindings |
-| `phone_layout.py` | Windows | Phone layout window: where the phone's touch buttons go |
-| `android/` | Android | Phone app (open this folder in Android Studio) |
-| `packaging/`, `.github/workflows/release.yml` | | Release builds: receiver exe spec and the GitHub release workflow |
-| `pad_mapping.py` | Windows | Turns received buttons into virtual pad presses |
-| `app_common.py` | Both | Network discovery and shared UI pieces |
-| `protocol.py` | Both | Packet format. Keep the same copy on both machines. |
-| `imu_reader.py` | Mac | Reads the motion sensor |
-| `demo_imu.py` | Any | Fake sensor for `sender_app.py --demo` |
-| `imu_probe.py` | Mac | Diagnostic: `sudo python3 imu_probe.py` checks the sensor, gyro and axes |
-| `mac_sender.py`, `pad_receiver.py`, `mock_sender.py`, `key_input.py` | | Terminal versions of the apps. The apps reuse their code. |
+| File or folder | Purpose |
+|---|---|
+| `receiver_app.pyw`, `Start Receiver.bat` | Windows receiver source and launcher. |
+| `sender_app.py`, `Start Sender.command` | Mac sender and launcher. |
+| `android/` | Android sender source and Gradle project. |
+| `packaging/`, `.github/workflows/release.yml` | Windows packaging and automated release builds. |
+| `controller_view.py`, `phone_layout.py` | Controller binding view and phone layout editor. |
+| `pad_mapping.py` | Maps incoming buttons to virtual controller inputs. |
+| `app_common.py`, `protocol.py` | Shared networking, UI helpers, and packet format. Keep protocol copies compatible across devices. |
+| `imu_reader.py`, `imu_probe.py` | Mac sensor integration and diagnostics. |
+| `demo_imu.py` | Fake sensor for demo mode. |
+| `mac_sender.py`, `pad_receiver.py`, `mock_sender.py`, `key_input.py` | Command-line tools and shared app logic. |
 
 Written by Dimitar Martin Iliev
