@@ -186,6 +186,11 @@ python -m PyInstaller packaging/receiver.spec --noconfirm
 
 The exe lands in `dist/` and saves its settings next to itself.
 
+On a build machine without ViGEmBus, set `VGAMEPAD_SKIP_VIGEMBUS_INSTALL=true`
+before installing the build requirements (`$env:VGAMEPAD_SKIP_VIGEMBUS_INSTALL = "true"`
+in PowerShell). This skips the interactive driver installer; the release workflow
+sets it automatically. Players still need to install ViGEmBus on their gaming PC.
+
 ## Files
 
 | File | Runs on | Purpose |
@@ -204,4 +209,4 @@ The exe lands in `dist/` and saves its settings next to itself.
 | `imu_probe.py` | Mac | Diagnostic: `sudo python3 imu_probe.py` checks the sensor, gyro and axes |
 | `mac_sender.py`, `pad_receiver.py`, `mock_sender.py`, `key_input.py` | | Terminal versions of the apps. The apps reuse their code. |
 
-Written by Dimitar Martin Iliev 
+Written by Dimitar Martin Iliev
